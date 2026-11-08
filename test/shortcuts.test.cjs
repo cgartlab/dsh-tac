@@ -3592,3 +3592,32 @@ test('every default shortcut has its intended effect on a clean profile', () => 
   harness.doc.__removeRoot(composer);
   harness.doc.__removeRoot(scroller);
 });
+test('chat shortcuts that find nothing leave a trace in the log', () => {
+  const harness = createHarness();
+  const logs = harness.registrations.find((item) => item.spec.id === 'project-board-settings').spec.inject().hooks.logs;
+  const settings = harness.settingsStore.getSnapshot();
+  harness.settingsStore.set({ log: Object.assign({}, settings.log, { level: 'debug' }) });
+  harness.resetState();
+  harness.clearSpies();
+
+  // No conversation on screen at all: each of these used to be completely silent.
+  harness.pressCombo('alt+KeyU');
+  harness.runTimers();
+  assert.ok(
+    logs.getSnapshot().entries.some((entry) => entry.message === 'hold:no-chat'),
+    'a hold without a chat reports why it did nothing'
+  );
+
+  harness.pressCombo('alt+KeyS');
+  assert.ok(
+    logs.getSnapshot().entries.some((entry) => entry.message === 'scrollBottom:no-chat'),
+    'scroll-to-bottom without a chat reports why it did nothing'
+  );
+
+  harness.pressCombo('alt+KeyU');
+  harness.window.dispatchEvent(new KeyboardEventShim('keyup', { code: 'KeyU', altKey: true, bubbles: true }));
+  assert.ok(
+    logs.getSnapshot().entries.some((entry) => entry.message === 'userJump:no-target'),
+    'an instruction jump with no instructions reports why it did nothing'
+  );
+});

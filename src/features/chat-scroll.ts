@@ -56,7 +56,10 @@ export function stopHoldScroll(allowJump: boolean): void {
 
 function startHoldLoop(state: HoldScrollState): void {
   const initial = findChatScroller();
-  if (!initial) return;
+  if (!initial) {
+    logEvent('debug', 'shortcut', 'hold:no-chat', { dir: state.dir });
+    return;
+  }
   state.mode = 'running';
   state.scroller = initial;
   state.speed = 9;

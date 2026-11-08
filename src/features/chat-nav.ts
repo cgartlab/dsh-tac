@@ -1,5 +1,6 @@
 /** Jumping between user instructions in the rendered conversation. */
 import { chatJumpState } from '../core/state';
+import { logEvent } from '../core/log';
 import { findChatScroller, visibleChatFlow } from './chat-dom';
 
 /** Every rendered user-instruction bubble, in document order. */
@@ -91,7 +92,10 @@ async function loadEarlierThenJump(anchor: HTMLElement, previousCount: number): 
 export function jumpUserMessage(direction: number): void {
   if (chatJumpState.loading) return;
   const rows = collectUserMessageTargets();
-  if (rows.length === 0) return;
+  if (rows.length === 0) {
+    logEvent('debug', 'shortcut', 'userJump:no-target', { direction: direction });
+    return;
+  }
   const scroller = findChatScroller();
   const bounds = scroller ? scroller.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
   const viewportTop = Math.max(0, Math.min(bounds.top, window.innerHeight));

@@ -773,6 +773,7 @@
       }
     }
     const target = scrollParent || findChatScroller();
+    if (!target) logEvent("debug", "shortcut", "scrollBottom:no-chat", {});
     if (target) {
       const pin = (left) => {
         const node = target.isConnected ? target : findChatScroller();
@@ -886,7 +887,10 @@
   function jumpUserMessage(direction) {
     if (chatJumpState.loading) return;
     const rows = collectUserMessageTargets();
-    if (rows.length === 0) return;
+    if (rows.length === 0) {
+      logEvent("debug", "shortcut", "userJump:no-target", { direction });
+      return;
+    }
     const scroller = findChatScroller();
     const bounds = scroller ? scroller.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
     const viewportTop = Math.max(0, Math.min(bounds.top, window.innerHeight));
@@ -945,7 +949,10 @@
   }
   function startHoldLoop(state) {
     const initial = findChatScroller();
-    if (!initial) return;
+    if (!initial) {
+      logEvent("debug", "shortcut", "hold:no-chat", { dir: state.dir });
+      return;
+    }
     state.mode = "running";
     state.scroller = initial;
     state.speed = 9;
