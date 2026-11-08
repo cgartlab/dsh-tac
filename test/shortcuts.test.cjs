@@ -3109,3 +3109,75 @@ test('Alt+E on a disabled floating list re-enables it expanded', () => {
   assert.equal(/collapsed/.test(hud.node.className), false, 'and it comes back expanded, not as a pill');
   assert.equal(harness.window.localStorage.getItem('pbx.hud.collapsed'), '0', 'the expanded choice is persisted');
 });
+test('board shortcuts do not disturb a docked floating list', () => {
+  const harness = createHarness();
+  harness.window.localStorage.setItem('pbx.hud.pos', JSON.stringify({ x: 600, y: 500 }));
+  const seeded = harness.settingsStore.getSnapshot();
+  harness.settingsStore.set({ hud: Object.assign({}, seeded.hud, { defaultPosition: 'last' }) });
+  const closed = '0px minmax(400px, 1fr) minmax(0px, 800px)';
+  const opened = '280px minmax(400px, 1fr) minmax(0px, 800px)';
+  const frame = new VirtualNode('div', { className: 'AppFrame_frame', style: { gridTemplateColumns: closed }, 'data-sidebar-collapsed': 'true' }, [], harness.doc);
+  frame.attributes.style = 'grid-template-columns: ' + closed;
+  const column = new VirtualNode('div', { class: '_sidebarCol' }, [], harness.doc);
+  column.getBoundingClientRect = () => ({ width: 280, height: 800, top: 0, left: 0, right: 280, bottom: 800 });
+  frame.appendChild(column);
+  harness.doc.__addRoot(frame);
+
+  const hud = harness.mountHud('hud');
+  frame.style.gridTemplateColumns = opened;
+  frame.attributes.style = 'grid-template-columns: ' + opened;
+  frame.removeAttribute('data-sidebar-collapsed');
+  harness.runIntervals();
+  hud.render();
+  harness.runTimers();
+  hud.render();
+  assert.equal(/collapsed/.test(hud.node.className), true, 'the list is docked and collapsed');
+  assert.equal(hud.node.style.left, '288px', 'the pill sits beside the sidebar');
+
+  const logs = harness.registrations.find((item) => item.spec.id === 'project-board-settings').spec.inject().hooks.logs;
+  const dockCount = () => logs.getSnapshot().entries.filter((entry) => entry.scope === 'hud' && entry.message === 'dock').length;
+  const docked = dockCount();
+  assert.ok(docked >= 1, 'docking is recorded');
+
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyN');
+  hud.render();
+  harness.runIntervals();
+  hud.render();
+  assert.deepEqual(harness.spies.toggleBoard, ['narrow'], 'the board shortcut still opens the pane');
+  assert.equal(/collapsed/.test(hud.node.className), true, 'the docked pill stays collapsed');
+  assert.equal(hud.node.style.left, '288px', 'the docked position is untouched by the board shortcut');
+  assert.equal(dockCount(), docked, 'the board shortcut does not dock the list again');
+
+  harness.doc.__removeRoot(frame);
+});
+test('Alt+E during a drag collapses the list and the drop still completes', () => {
+  const harness = createHarness();
+  const hud = harness.mountHud('hud');
+  assert.ok(hud.node, 'the floating list rendered');
+  hud.node.getBoundingClientRect = () => ({ width: 280, height: 200, top: 40, left: 40, right: 320, bottom: 240 });
+  hud.node.offsetWidth = 280;
+  hud.node.offsetHeight = 200;
+
+  const head = harness.doc.querySelector('.pbx-hudHead');
+  head.props.onPointerDown({ button: 0, clientX: 100, clientY: 100, target: head, currentTarget: head, preventDefault() {}, stopPropagation() {} });
+  hud.render();
+  assert.ok(/dragging/.test(hud.node.className), 'the list reports the drag');
+
+  harness.window.dispatchEvent({ type: 'pointermove', clientX: 300, clientY: 320, bubbles: true });
+  hud.render();
+
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyE');
+  hud.render();
+  harness.runTimers();
+  hud.render();
+  assert.equal(/collapsed/.test(hud.node.className), true, 'Alt+E collapses the list even mid-drag');
+
+  harness.window.dispatchEvent({ type: 'pointerup', bubbles: true });
+  hud.render();
+  assert.equal(/dragging/.test(hud.node.className), false, 'the drop clears the drag state');
+  assert.ok(harness.window.localStorage.getItem('pbx.hud.pos'), 'the dropped position is still stored');
+});

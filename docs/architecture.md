@@ -162,3 +162,11 @@ inline `grid-template-columns` whose first track is the sidebar column (0 closed
 280 expanded) and a `data-sidebar-collapsed` attribute. Those describe the target state and
 change on the same frame as the key press, unlike the column's animated width.
 
+Docking keeps the pill's own vertical spot and slides it to the sidebar column's right edge
+(`edge + 8`), and remembers the spot to restore it. That reposition only applies to a list the
+user has moved: a list still at its configured default anchor (`top-right` / `bottom-right`)
+keeps its CSS anchor and is merely collapsed, because sliding a default-anchored pill across
+the screen and back would be pure noise. `readExpanded()` prefers the frame's target grid
+template, so tests must put a value (not the whole `grid-template-columns: …` declaration) in
+`element.style.gridTemplateColumns` or they exercise the measured-width fallback instead.
+
