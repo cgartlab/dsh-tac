@@ -496,6 +496,16 @@ export function Palette(props: PaletteProps): unknown {
     return () => document.removeEventListener('keydown', onShortcut, true);
   }, [palette]);
 
+  /* The palette is modal and owns the keyboard from the moment it opens. A held scroll can be
+     opened by the mouse (the capsule, a shortcut that was already released mid-frame), and the
+     release key may never reach the plugin while the search field has focus — the conversation
+     would keep moving behind the panel. Stop it here rather than relying on the keyup. */
+  useEffect(() => {
+    if (!state.open) return undefined;
+    stopHoldScroll(false);
+    return undefined;
+  }, [state.open]);
+
   if (!mounted) return null;
   const close = (): void => {
     if (palette) palette.set({ open: false });

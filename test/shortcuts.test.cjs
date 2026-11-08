@@ -886,10 +886,12 @@ function createHarness(options) {
     spies,
     instance,
     render,
-    mountHud() {
+    mountHud(rootKey) {
       const entry = registrations.find((item) => item.spec.id === 'project-board-hud');
       assert.ok(entry, 'the floating session list overlay is registered');
-      const hud = runtime.mount(entry.component, Object.assign({}, props, entry.spec.inject()), () => {});
+      const hud = runtime.mount(entry.component, Object.assign({}, props, entry.spec.inject()), (node) => {
+        if (rootKey) doc.__setComponentRoot(rootKey, node);
+      });
       hud.render();
       return hud;
     },
@@ -2928,4 +2930,60 @@ test('delete asks for confirmation once and then calls the host', async () => {
   menu.instance.render();
   assert.deepEqual(deletions, ['s2'], 'the second press deletes the session');
   assert.equal(menu.injected.hooks.sessionMenu.getSnapshot().sessionId, null, 'the menu closes after deleting');
+});
+/* --------------------------------------------------------- floating list (HUD) */
+
+test('Alt+E collapses and expands the floating list and persists the choice', () => {
+  const harness = createHarness();
+  const hud = harness.mountHud('hud');
+  harness.resetState();
+  harness.clearSpies();
+
+  assert.ok(harness.doc.querySelector('.pbx-hud'), 'the floating list is rendered');
+
+  harness.pressCombo('alt+KeyE');
+  harness.runTimers(); // the 120 ms swap timer applies the collapse
+  hud.render();
+  assert.equal(harness.window.localStorage.getItem('pbx.hud.collapsed'), '1', 'the collapsed choice is persisted');
+  let root = harness.doc.querySelector('.pbx-hud');
+  assert.ok(String(root.className).indexOf('collapsed') >= 0, 'the pill is rendered after collapsing');
+
+  harness.pressCombo('alt+KeyE');
+  harness.runTimers();
+  hud.render();
+  assert.equal(harness.window.localStorage.getItem('pbx.hud.collapsed'), '0', 'the expanded choice is persisted');
+  root = harness.doc.querySelector('.pbx-hud');
+  assert.ok(String(root.className).indexOf('collapsed') < 0, 'the list is rendered after expanding');
+});
+
+test('opening the palette while a hold is running stops the scroll', () => {
+  const harness = createHarness();
+  const chat = makeScrollableChat(harness, { scrollTop: 600 });
+  harness.resetState();
+  harness.clearSpies();
+
+  harness.pressCombo('alt+KeyU');
+  harness.runTimers();
+  let clock = 0;
+  for (let i = 0; i < 5; i += 1) {
+    clock += 16;
+    harness.window.__setNow(clock);
+    harness.runFrame(clock);
+  }
+  const movedTo = chat.scroller.scrollTop;
+  assert.ok(movedTo < 600, 'the hold is scrolling before the palette opens');
+
+  // The user opens the search palette with the mouse while still holding the key.
+  harness.paletteStore.set({ open: true, move: { dir: 0, at: 0 } });
+  harness.render();
+  for (let i = 0; i < 5; i += 1) {
+    clock += 16;
+    harness.window.__setNow(clock);
+    harness.runFrame(clock);
+  }
+  assert.equal(chat.scroller.scrollTop, movedTo, 'the conversation stops scrolling once the palette is open');
+
+  harness.paletteStore.set({ open: false, move: { dir: 0, at: 0 } });
+  harness.window.dispatchEvent(new KeyboardEventShim('keyup', { code: 'KeyU', altKey: true, bubbles: true }));
+  chat.restore();
 });

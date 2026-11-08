@@ -4428,6 +4428,11 @@
       document.addEventListener("keydown", onShortcut, true);
       return () => document.removeEventListener("keydown", onShortcut, true);
     }, [palette]);
+    useEffect(() => {
+      if (!state.open) return void 0;
+      stopHoldScroll(false);
+      return void 0;
+    }, [state.open]);
     if (!mounted) return null;
     const close = () => {
       if (palette) palette.set({ open: false });
