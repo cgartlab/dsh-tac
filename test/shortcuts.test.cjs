@@ -3292,3 +3292,53 @@ test('Alt+S is harmless without a conversation on screen', () => {
   assert.equal(event.defaultPrevented, true, 'the combo is still consumed');
   assert.equal(harness.doc.activeElement, harness.doc.body, 'and no stray focus change happens');
 });
+test('the cycle shortcuts move the palette highlight while it is open', () => {
+  const harness = createHarness();
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyK');
+  assert.equal(harness.paletteOpen(), true, 'the palette is open');
+
+  harness.pressCombo('alt+Comma'); // next -> move the highlight down one row
+  harness.render();
+  const input = harness.doc.querySelector('.pbx-paletteInput');
+  input.props.onKeyDown({ key: 'Enter', preventDefault() {}, stopPropagation() {}, currentTarget: input });
+  harness.render();
+
+  assert.deepEqual(harness.services.calls.openSession, ['s2'], 'the moved highlight is the row that opens');
+  assert.equal(harness.paletteOpen(), false, 'choosing a row closes the palette');
+});
+
+test('filtering the palette keeps Enter on a real row', () => {
+  const harness = createHarness();
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyK');
+
+  function key(name) {
+    const node = harness.doc.querySelector('.pbx-paletteInput');
+    node.props.onKeyDown({ key: name, preventDefault() {}, stopPropagation() {}, currentTarget: node });
+    harness.render();
+  }
+  key('ArrowDown'); // highlight the second row
+
+  const input = harness.doc.querySelector('.pbx-paletteInput');
+  input.props.onChange({ target: { value: 'Beta' } });
+  harness.render();
+  key('Enter');
+
+  assert.deepEqual(harness.services.calls.openSession, ['s2'], 'the only matching row opens after the list narrows');
+});
+
+test('the palette shortcut closes an open palette and reopens it', () => {
+  const harness = createHarness();
+  harness.resetState();
+  harness.clearSpies();
+
+  harness.pressCombo('alt+KeyK');
+  assert.equal(harness.paletteOpen(), true, 'the first press opens the palette');
+  harness.pressCombo('alt+KeyK');
+  assert.equal(harness.paletteOpen(), false, 'the second press closes it');
+  harness.pressCombo('alt+KeyK');
+  assert.equal(harness.paletteOpen(), true, 'and it opens again instead of sticking');
+});
