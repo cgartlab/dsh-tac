@@ -1975,3 +1975,141 @@ test('the session cycle starts from an end when the current session is not liste
     harness.render();
   }
 });
+/* ------------------------------------------------------- view persistence + HUD */
+
+function mountBoardPanel(harness) {
+  const entry = harness.registrations.find((item) => item.spec.key === 'project-board');
+  assert.ok(entry, 'the main board panel is registered');
+  const injected = entry.spec.inject();
+  const props = Object.assign({}, injected, {
+    useSessions: (selector) => selector(SESSION_FIXTURE),
+    useSessionStatus: (selector) => selector(new Map()),
+    useWorkspaces: (selector) =>
+      selector({ items: [{ workspaceId: 'w1', title: 'Workspace', sessionIds: ['s1', 's2', 's3'] }], archivedSessionIds: [] }),
+    useSettings: (selector) => selector(harness.settingsStore.getSnapshot()),
+    t: harness.ctx.locale.bind('projectBoard')
+  });
+  const instance = harness.runtime.mount(entry.component, props, (node) => harness.doc.__setComponentRoot('board', node));
+  instance.render();
+  return instance;
+}
+
+test('opening the board by shortcut lands on the project view', () => {
+  const harness = createHarness();
+  const board = mountBoardPanel(harness);
+  const tabs = () => harness.doc.querySelectorAll('.pbx-tab');
+  assert.equal(tabs().length, 2, 'the board renders its two view tabs');
+  assert.equal(tabs()[0].getAttribute('aria-selected'), 'true', 'the configured default view is projects');
+
+  // The user switches to the session list while the pane stays mounted.
+  tabs()[1].props.onClick({});
+  board.render();
+  assert.equal(tabs()[1].getAttribute('aria-selected'), 'true', 'the session view is selected');
+
+  // Opening the board through a shortcut must land on projects even though the mounted
+  // component still holds the session view in its own state.
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyN');
+  board.render();
+  assert.equal(tabs()[0].getAttribute('aria-selected'), 'true', 'a shortcut open switches back to the project view');
+  assert.deepEqual(harness.spies.toggleBoard, ['narrow'], 'the board was opened once');
+});
+
+test('Alt+E turns a disabled floating list back on', () => {
+  const harness = createHarness();
+  const hud = harness.mountHud();
+  const before = harness.settingsStore.getSnapshot();
+  harness.settingsStore.set({ hud: Object.assign({}, before.hud, { enabled: false }) });
+  hud.render();
+
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyE');
+  hud.render();
+
+  assert.equal(harness.settingsStore.getSnapshot().hud.enabled, true, 'the shortcut re-enables the floating list');
+  assert.equal(harness.hudEvents().filter((type) => type === 'pbx-hud-toggle').length, 1, 'one toggle event per press');
+});
+test('Alt+W toggles the sidebar without disturbing an open board pane', () => {
+  const harness = createHarness();
+  const state = connectBoardPane(harness);
+  harness.resetState();
+  harness.clearSpies();
+
+  harness.pressCombo('alt+KeyN');
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyW');
+
+  assert.deepEqual(harness.services.calls.layoutToggleSidebar, [true], 'the sidebar toggles');
+  assert.deepEqual(harness.spies.toggleBoard, [], 'the board pane is not toggled again');
+  assert.equal(state.expanded, true, 'the board stays open');
+  assert.equal(state.width, 380, 'and keeps its narrow width');
+});
+
+test('Alt+W walks the sidebar API fallbacks when a path is missing or throws', () => {
+  const harness = createHarness();
+  const paths = [];
+  harness.services.layout.toggleSidebar = () => {
+    throw new Error('not supported by this host build');
+  };
+  harness.services.layout.panels = { toggleSidebar: () => { paths.push('panels'); }, setRightbar() {} };
+
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyW');
+  assert.deepEqual(paths, ['panels'], 'a throwing primary path falls through to layout.panels.toggleSidebar');
+
+  // A host build that exposes neither layout method still has the left sidebar service.
+  delete harness.services.layout.toggleSidebar;
+  harness.services.layout.panels = undefined;
+  harness.services.sidebarLeft = { toggleExpanded: () => { paths.push('left'); } };
+  harness.pressCombo('alt+KeyW');
+  assert.deepEqual(paths, ['panels', 'left'], 'the left sidebar service is the last fallback');
+});
+test('every shortcut that must work while typing still does', () => {
+  const harness = createHarness();
+  const textarea = harness.makeEditable();
+  harness.doc.__addRoot(textarea);
+
+  // A queued message for Alt+Enter.
+  const dock = new VirtualNode('div', { 'data-queue-dock': '' }, [], harness.doc);
+  const row = new VirtualNode('li', {}, [], harness.doc);
+  const steer = new VirtualNode('button', { 'aria-label': '插话发送' }, [], harness.doc);
+  let steers = 0;
+  steer.click = () => { steers += 1; };
+  row.appendChild(steer);
+  dock.appendChild(row);
+  harness.doc.__addRoot(dock);
+
+  // The host's own back-to-bottom control for Alt+S.
+  const backToBottom = new VirtualNode('button', { 'aria-label': '回到底部' }, [], harness.doc);
+  backToBottom.getBoundingClientRect = () => ({ width: 24, height: 24, top: 0, left: 0, right: 24, bottom: 24 });
+  let bottoms = 0;
+  backToBottom.click = () => { bottoms += 1; };
+  harness.doc.__addRoot(backToBottom);
+
+  const cases = [
+    { key: 'Enter', code: 'Enter', id: 'interject', check: () => assert.equal(steers, 1, 'Alt+Enter steers while typing') },
+    { key: 'u', code: 'KeyU', id: 'userPrev', check: () => {} },
+    { key: 'm', code: 'KeyM', id: 'userNext', check: () => {} },
+    { key: 's', code: 'KeyS', id: 'scrollBottom', check: () => assert.equal(bottoms, 1, 'Alt+S scrolls to the bottom while typing') }
+  ];
+
+  for (const item of cases) {
+    harness.resetState();
+    harness.clearSpies();
+    harness.focusEditable(textarea);
+    const start = harness.timerCount();
+    const event = harness.pressRaw({ key: item.key, code: item.code, altKey: true, bubbles: true });
+    assert.equal(event.defaultPrevented, true, 'Alt+' + item.code + ' (' + item.id + ') is consumed while typing');
+    if (item.id === 'userPrev' || item.id === 'userNext') {
+      const holdTimers = harness.window.__timers.slice(start).filter((timer) => timer.delay === 300);
+      assert.equal(holdTimers.length, 1, 'Alt+' + item.code + ' arms the hold while typing');
+    }
+    item.check();
+  }
+
+  harness.doc.__removeRoot(dock);
+  harness.doc.__removeRoot(backToBottom);
+});
