@@ -44,7 +44,7 @@
 - 失误：`layout.toggleSidebar` 失败时静默跳过，"接口不存在 / 调了没生效 / 键没到"三种情况分不清 → 规则：开关按 `layout.toggleSidebar` → `layout.panels.toggleSidebar` → `sidebarLeft.toggleExpanded` 兜底并记录实际路径；260ms 后核对布局，记 `applied` / `no-change` / `unverified`（0.2.1、0.2.3）
 - 失误：热重载遗留的旧监听器会让"全局副作用型"快捷键执行两次——`Alt+E` 连发两个 `pbx-hud-toggle`（开又关，看起来没反应）、`Alt+U` 起两个 rAF 循环（滚动速度翻倍）、`Alt+Enter` 连点两次插话按钮（第二次只剩一条"没有排队消息"的误报）→ 规则：凡有全局副作用的动作（HUD、按住滚动、插话、回到底部、会话循环）执行前都用 `pbxShortcutActed` 认领这次按键；调色板 / 重命名 / 会话菜单的 store 属于插件实例，旧实例切换对用户不可见，**不要**认领（否则活跃实例会被误跳过）→ 证据：本轮修复，`test/shortcuts.test.cjs` 的 Alt+E / Alt+U 重复投递回归
 - 失误：`pbxSidebarActed` 重复检测只加给了 `Alt+W`（leftSidebar），`Alt+N/B/V`（board）没有 → 热重载后 leaked 监听器让 Alt+N toggle 两次互相取消，用户看到"没反应" → 规则：给一个快捷键加重复检测时，检查**所有同类快捷键**是否都需要；board 快捷键用 `pbxBoardActed` 标记，与 sidebar 同模式（0.4.0）
-- 失误：`healShortcutConflicts` 只挂在 `shortcutsVersion !== 1` 的一次性迁移里，迁移标记写完之后再出现的重复绑定（新动作的默认键撞上用户改过的键、手改存储）永远不会被修，表现为"其中一个快捷键按了没反应"，而且设置页只在录制时报冲突、加载时不报 → 规则：冲突自愈必须在每次 `mergeSettings` 时**幂等**执行（仅修重复，唯一绑定原样通过），并配一条"加载后同一组合只有一个占用者"的回归测试 → 证据：本轮修复，`src/core/settings.ts`、`test/shortcuts.test.cjs`
+- 失误：`healShortcutConflicts` 只挂在 `shortcutsVersion !== 1` 的一次性迁移里，迁移标记写完之后再出现的重复绑定（新动作的默认键撞上用户改过的键、手改存储）永远不会被修，表现为"其中一个快捷键按了没反应"，而且设置页只在录制时报冲突、加载时不报 → 规则：冲突自愈必须在每次 `mergeSettings` 时**幂等**执行（仅修重复，唯一绑定原样通过），并配一条"加载后同一组合只有一个占用者"的回归测试；自愈不了的残留（两个动作的默认键都被其他动作占用）必须在设置页 `data-self-conflict` 行显式列出 + 启动日志记 `duplicate binding` 警告，不能静默留一个死快捷键 → 证据：本轮修复，`src/core/settings.ts`、`src/features/settings.ts`、`src/apply.ts`、`test/shortcuts.test.cjs`
 
 ## 原生侧栏、看板与 HUD 状态
 

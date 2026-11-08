@@ -2670,3 +2670,58 @@ test('duplicate shortcut bindings are healed when settings load', () => {
   assert.equal(shortcuts.prev, 'alt+KeyZ', 'the earlier action keeps its combo');
   assert.equal(shortcuts.next, 'alt+Comma', 'the later action falls back to its own default');
 });
+test('a duplicate that healing cannot repair is surfaced instead of staying silent', () => {
+  // Persist a settings blob, then craft the case healing cannot fix: prev and next share a
+  // combo while both of their own defaults are taken by other actions.
+  const seed = createHarness();
+  const page = mountSettingsPage(seed);
+  clickKeycap(seed, page, 0);
+  seed.pressRaw({ key: 'k', code: 'KeyK', altKey: true, bubbles: true });
+  page.instance.render();
+  const dump = seed.window.localStorage.__dump();
+  const key = Object.keys(dump).find((name) => {
+    try {
+      const value = JSON.parse(dump[name]);
+      return Boolean(value && value.shortcuts);
+    } catch (error) {
+      return false;
+    }
+  });
+  assert.ok(key, 'the settings blob was persisted');
+
+  const stored = JSON.parse(dump[key]);
+  stored.shortcuts.prev = 'alt+KeyZ';
+  stored.shortcuts.next = 'alt+KeyZ';
+  stored.shortcuts.userPrev = 'alt+KeyI'; // occupies prev's default
+  stored.shortcuts.scrollBottom = 'alt+Comma'; // occupies next's default
+
+  const fresh = createHarness({ storage: { [key]: JSON.stringify(stored) } });
+  const shortcuts = fresh.settingsStore.getSnapshot().shortcuts;
+  assert.equal(shortcuts.prev, 'alt+KeyZ');
+  assert.equal(shortcuts.next, 'alt+KeyZ', 'the duplicate survives when neither default is free');
+
+  // The settings page names it instead of leaving a silently dead shortcut.
+  mountSettingsPage(fresh);
+  const warns = fresh.doc.querySelectorAll('.pbx-setWarn[data-self-conflict]');
+  assert.equal(warns.length, 1, 'the settings page reports the unresolved duplicate');
+  assert.equal(warns[0].getAttribute('data-self-conflict'), 'alt+KeyZ');
+
+  // The startup scan records it in the log so a bug report can show it.
+  fresh.runTimers();
+  const logs = fresh.registrations.find((item) => item.spec.id === 'project-board-settings').spec.inject().hooks.logs;
+  const entry = logs.getSnapshot().entries.find((item) => item.scope === 'shortcuts' && item.message === 'duplicate binding');
+  assert.ok(entry, 'the duplicate binding is logged at startup');
+  assert.equal(entry.data.combo, 'alt+KeyZ');
+  assert.equal(entry.level, 'warn', 'the log entry is a warning');
+});
+
+test('a clean shortcut map reports no self-conflict anywhere', () => {
+  const harness = createHarness();
+  mountSettingsPage(harness);
+  assert.equal(harness.doc.querySelectorAll('.pbx-setWarn[data-self-conflict]').length, 0, 'no warning rows for unique bindings');
+
+  harness.runTimers();
+  const logs = harness.registrations.find((item) => item.spec.id === 'project-board-settings').spec.inject().hooks.logs;
+  const duplicates = logs.getSnapshot().entries.filter((item) => item.message === 'duplicate binding');
+  assert.equal(duplicates.length, 0, 'no duplicate-binding log entries for unique bindings');
+});

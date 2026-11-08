@@ -83,6 +83,7 @@ export const zh = {
       'menu.deleteUnavailable': '当前 DSH 客户端未开放会话删除接口，请使用归档。',
       'menu.failed': '操作失败：{message}',
       'menu.busy': '处理中…',
+  'settings.selfConflict': '{combo} 同时绑定给了 {names}，请重新录制其中一个。',
       'settings.shortcut.hint': '点击键帽后按下新的组合键；必须包含 {ctrl} / {alt} / {meta}，Esc 取消。与 DSH 内置命令冲突时会拒绝录制并弹出提示。',
       'settings.shortcutNeedModifier': '快捷键必须包含 {ctrl} / {alt} / {meta}，不能使用裸键。',
       'settings.shortcutConflict': '该组合键已被其他功能占用，请换一个。',

@@ -1830,6 +1830,7 @@
     "menu.deleteUnavailable": "This DSH client does not expose session deletion yet. Use archive instead.",
     "menu.failed": "Failed: {message}",
     "menu.busy": "Working…",
+    "settings.selfConflict": "{combo} is bound to {names}; record one of them again.",
     "settings.shortcut.hint": "Click a keycap, then press the new combination; {ctrl} / {alt} / {meta} is required; Esc cancels. Combinations that clash with built-in DSH commands are rejected with a notice.",
     "settings.shortcutNeedModifier": "A shortcut must include {ctrl} / {alt} / {meta}; bare keys are not allowed.",
     "settings.shortcutConflict": "That combination is already used by another action.",
@@ -2110,6 +2111,7 @@
     "menu.deleteUnavailable": "当前 DSH 客户端未开放会话删除接口，请使用归档。",
     "menu.failed": "操作失败：{message}",
     "menu.busy": "处理中…",
+    "settings.selfConflict": "{combo} 同时绑定给了 {names}，请重新录制其中一个。",
     "settings.shortcut.hint": "点击键帽后按下新的组合键；必须包含 {ctrl} / {alt} / {meta}，Esc 取消。与 DSH 内置命令冲突时会拒绝录制并弹出提示。",
     "settings.shortcutNeedModifier": "快捷键必须包含 {ctrl} / {alt} / {meta}，不能使用裸键。",
     "settings.shortcutConflict": "该组合键已被其他功能占用，请换一个。",
@@ -5807,6 +5809,20 @@
     const [recordError, setRecordError] = useState("");
     const [builtinWarnings, setBuiltinWarnings] = useState([]);
     const scannedConflictsRef = useRef(/* @__PURE__ */ new Set());
+    const selfConflicts = (() => {
+      const owners = /* @__PURE__ */ new Map();
+      for (const action of Object.keys(config.shortcuts || {})) {
+        const combo = config.shortcuts[action];
+        if (!owners.has(combo)) owners.set(combo, [action]);
+        else owners.get(combo).push(action);
+      }
+      const found = [];
+      for (const [combo, actions] of owners) {
+        if (actions.length < 2) continue;
+        found.push({ combo, names: actions.map((action) => t(SHORTCUT_LABEL_KEYS[action] || "settings.shortcut.palette")) });
+      }
+      return found;
+    })();
     const useWorkspaces = typeof props.useWorkspaces === "function" ? props.useWorkspaces : fallbackHook();
     const wsSnap = useWorkspaces((value) => value);
     const ghWorkspaces = (wsSnap && wsSnap.items || []).filter((item) => item && item.path);
@@ -6257,6 +6273,13 @@
             "div",
             { key: "warn-" + item.key, className: "pbx-setWarn" },
             t("toast.conflictExisting", { combo: comboDisplay(item.combo), name: item.label })
+          )
+        ),
+        selfConflicts.map(
+          (item) => h(
+            "div",
+            { key: "self-" + item.combo, className: "pbx-setWarn", "data-self-conflict": item.combo },
+            t("settings.selfConflict", { combo: comboDisplay(item.combo), names: item.names.join(" / ") })
           )
         ),
         recordError ? h("div", { className: "pbx-setError" }, recordError) : null,
@@ -7304,6 +7327,16 @@
             const combo = snap.shortcuts[key];
             const conflict = findBuiltinConflict(combo);
             if (conflict) conflicts.push({ key, combo, label: conflict.label });
+          }
+          const owners = /* @__PURE__ */ new Map();
+          for (const key of Object.keys(snap.shortcuts || {})) {
+            const combo = snap.shortcuts[key];
+            const list = owners.get(combo);
+            if (list) list.push(key);
+            else owners.set(combo, [key]);
+          }
+          for (const [combo, actions] of owners) {
+            if (actions.length > 1) logEvent("warn", "shortcuts", "duplicate binding", { combo, actions });
           }
           if (conflicts.length === 0) return;
           const first = conflicts[0];

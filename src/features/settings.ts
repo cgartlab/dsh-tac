@@ -51,6 +51,23 @@ export function SettingsPage(props: SettingsPageProps): unknown {
   const [recordError, setRecordError] = useState('');
   const [builtinWarnings, setBuiltinWarnings] = useState<BuiltinWarning[]>([]);
   const scannedConflictsRef = useRef(new Set<string>());
+  /* settings-from-storage healing is best effort: when both colliding actions have their own
+     defaults taken by other actions, a duplicate cannot be repaired without inventing a
+     binding. Show it here instead of leaving a silently dead shortcut. */
+  const selfConflicts: Array<{ combo: string; names: string[] }> = (() => {
+    const owners = new Map<string, ShortcutAction[]>();
+    for (const action of Object.keys(config.shortcuts || {}) as ShortcutAction[]) {
+      const combo = config.shortcuts[action];
+      if (!owners.has(combo)) owners.set(combo, [action]);
+      else owners.get(combo)!.push(action);
+    }
+    const found: Array<{ combo: string; names: string[] }> = [];
+    for (const [combo, actions] of owners) {
+      if (actions.length < 2) continue;
+      found.push({ combo: combo, names: actions.map((action) => t(SHORTCUT_LABEL_KEYS[action] || 'settings.shortcut.palette')) });
+    }
+    return found;
+  })();
   const useWorkspaces = typeof props.useWorkspaces === 'function' ? props.useWorkspaces : fallbackHook<WorkspaceSnapshot>();
   const wsSnap = useWorkspaces((value) => value);
   const ghWorkspaces = ((wsSnap && wsSnap.items) || []).filter((item) => item && item.path);
@@ -524,6 +541,13 @@ export function SettingsPage(props: SettingsPageProps): unknown {
           'div',
           { key: 'warn-' + item.key, className: 'pbx-setWarn' },
           t('toast.conflictExisting', { combo: comboDisplay(item.combo), name: item.label })
+        )
+      ),
+      selfConflicts.map((item) =>
+        h(
+          'div',
+          { key: 'self-' + item.combo, className: 'pbx-setWarn', 'data-self-conflict': item.combo },
+          t('settings.selfConflict', { combo: comboDisplay(item.combo), names: item.names.join(' / ') })
         )
       ),
       recordError ? h('div', { className: 'pbx-setError' }, recordError) : null,

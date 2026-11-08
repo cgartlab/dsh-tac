@@ -753,6 +753,16 @@ export function apply(ctx: HostContext): void {
           const conflict = findBuiltinConflict(combo);
           if (conflict) conflicts.push({ key: key, combo: combo, label: conflict.label });
         }
+        const owners = new Map<string, string[]>();
+        for (const key of Object.keys(snap.shortcuts || {})) {
+          const combo = snap.shortcuts[key as keyof typeof snap.shortcuts];
+          const list = owners.get(combo);
+          if (list) list.push(key);
+          else owners.set(combo, [key]);
+        }
+        for (const [combo, actions] of owners) {
+          if (actions.length > 1) logEvent('warn', 'shortcuts', 'duplicate binding', { combo: combo, actions: actions });
+        }
         if (conflicts.length === 0) return;
         const first = conflicts[0];
         pushToast({

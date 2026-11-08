@@ -85,6 +85,7 @@ export const en: Dict = {
       'menu.deleteUnavailable': 'This DSH client does not expose session deletion yet. Use archive instead.',
       'menu.failed': 'Failed: {message}',
       'menu.busy': 'Working…',
+  'settings.selfConflict': '{combo} is bound to {names}; record one of them again.',
       'settings.shortcut.hint': 'Click a keycap, then press the new combination; {ctrl} / {alt} / {meta} is required; Esc cancels. Combinations that clash with built-in DSH commands are rejected with a notice.',
       'settings.shortcutNeedModifier': 'A shortcut must include {ctrl} / {alt} / {meta}; bare keys are not allowed.',
       'settings.shortcutConflict': 'That combination is already used by another action.',
