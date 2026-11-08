@@ -3181,3 +3181,42 @@ test('Alt+E during a drag collapses the list and the drop still completes', () =
   assert.equal(/dragging/.test(hud.node.className), false, 'the drop clears the drag state');
   assert.ok(harness.window.localStorage.getItem('pbx.hud.pos'), 'the dropped position is still stored');
 });
+test('invalid stored shortcut values fall back to their defaults', () => {
+  // Persist a real blob, then corrupt individual values the way a hand-edited file would.
+  const seed = createHarness();
+  const page = mountSettingsPage(seed);
+  clickKeycap(seed, page, 0);
+  seed.pressRaw({ key: 'k', code: 'KeyK', altKey: true, bubbles: true });
+  page.instance.render();
+  const dump = seed.window.localStorage.__dump();
+  const key = Object.keys(dump).find((name) => {
+    try {
+      const value = JSON.parse(dump[name]);
+      return Boolean(value && value.shortcuts);
+    } catch (error) {
+      return false;
+    }
+  });
+  assert.ok(key, 'the settings blob was persisted');
+
+  const stored = JSON.parse(dump[key]);
+  stored.shortcuts.prev = 'KeyK'; // no modifier
+  stored.shortcuts.next = ''; // empty
+  stored.shortcuts.userPrev = 42; // wrong type
+  stored.shortcuts.palette = 'alt+KeyP'; // a valid custom combo
+  stored.shortcuts.bogusAction = 'alt+KeyQ'; // unknown action
+
+  const fresh = createHarness({ storage: { [key]: JSON.stringify(stored) } });
+  const shortcuts = fresh.settingsStore.getSnapshot().shortcuts;
+  assert.equal(shortcuts.prev, 'alt+KeyI', 'a modifier-less value falls back to the default');
+  assert.equal(shortcuts.next, 'alt+Comma', 'an empty value falls back to the default');
+  assert.equal(shortcuts.userPrev, 'alt+KeyU', 'a non-string value falls back to the default');
+  assert.equal(shortcuts.palette, 'alt+KeyP', 'a valid custom combo survives untouched');
+
+  fresh.resetState();
+  fresh.clearSpies();
+  const restored = fresh.pressCombo('alt+KeyI');
+  assert.equal(restored.defaultPrevented, true, 'the restored default combo works again');
+  const unknown = fresh.pressCombo('alt+KeyQ');
+  assert.equal(unknown.defaultPrevented, false, 'a combo stored under an unknown action stays inert');
+});
