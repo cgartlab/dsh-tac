@@ -3342,3 +3342,48 @@ test('the palette shortcut closes an open palette and reopens it', () => {
   harness.pressCombo('alt+KeyK');
   assert.equal(harness.paletteOpen(), true, 'and it opens again instead of sticking');
 });
+test('a disabled board leaves its shortcuts alone', () => {
+  const harness = createHarness();
+  const before = harness.settingsStore.getSnapshot();
+  harness.settingsStore.set({ board: Object.assign({}, before.board, { enabled: false }) });
+  harness.resetState();
+  harness.clearSpies();
+  harness.render();
+
+  for (const combo of ['alt+KeyN', 'alt+KeyB', 'alt+KeyV']) {
+    const event = harness.pressCombo(combo);
+    assert.equal(event.defaultPrevented, false, combo + ' is left to the rest of the app');
+  }
+  assert.deepEqual(harness.spies.toggleBoard, [], 'no board mode is requested while the board is disabled');
+
+  // Re-enabling it restores the shortcuts immediately (no reload needed).
+  const after = harness.settingsStore.getSnapshot();
+  harness.settingsStore.set({ board: Object.assign({}, after.board, { enabled: true }) });
+  harness.resetState();
+  harness.clearSpies();
+  const enabled = harness.pressCombo('alt+KeyN');
+  assert.equal(enabled.defaultPrevented, true, 'the shortcut is consumed again');
+  assert.deepEqual(harness.spies.toggleBoard, ['narrow'], 'and it opens the board again');
+});
+
+test('auto-repeat never re-triggers a shortcut', () => {
+  const harness = createHarness();
+  harness.resetState();
+  harness.clearSpies();
+
+  // A held key arrives as repeat=true after the first press: the first acts, the repeats do not.
+  const first = harness.pressRaw({ key: 'e', code: 'KeyE', altKey: true, bubbles: true });
+  const repeat = harness.pressRaw({ key: 'e', code: 'KeyE', altKey: true, repeat: true, bubbles: true });
+  assert.equal(first.defaultPrevented, true, 'the first press acts');
+  assert.equal(repeat.defaultPrevented, false, 'the repeat is ignored entirely');
+  assert.equal(harness.hudEvents().filter((type) => type === 'pbx-hud-toggle').length, 1, 'only one toggle event');
+
+  // Same for the hold: a repeated press must not arm a second loop.
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressRaw({ key: 'u', code: 'KeyU', altKey: true, bubbles: true });
+  const armed = harness.timerCount();
+  harness.pressRaw({ key: 'u', code: 'KeyU', altKey: true, repeat: true, bubbles: true });
+  assert.equal(harness.timerCount(), armed, 'the repeat does not arm another hold timer');
+  harness.window.dispatchEvent(new KeyboardEventShim('keyup', { code: 'KeyU', altKey: true, bubbles: true }));
+});

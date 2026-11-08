@@ -352,6 +352,12 @@ export function Palette(props: PaletteProps): unknown {
         return;
       }
       if (isSidebarBoard || isPanelHalf || isPanelFull) {
+        /* A disabled board must not answer its shortcuts: opening the right panel would only
+           show the "board is disabled" placeholder, and the capsule that normally reaches the
+           board is hidden in that state too. Leave the combo to the rest of the app, exactly
+           like a disabled palette. */
+        const boardSettings = settingsRef.current && settingsRef.current.board;
+        if (boardSettings && boardSettings.enabled === false) return;
         event.preventDefault();
         event.stopPropagation();
         stopHoldScroll(false);

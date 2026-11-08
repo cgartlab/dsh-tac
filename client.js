@@ -4295,6 +4295,8 @@
           return;
         }
         if (isSidebarBoard || isPanelHalf || isPanelFull) {
+          const boardSettings = settingsRef.current && settingsRef.current.board;
+          if (boardSettings && boardSettings.enabled === false) return;
           event.preventDefault();
           event.stopPropagation();
           stopHoldScroll(false);
