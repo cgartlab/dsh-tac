@@ -4290,7 +4290,10 @@
         const isRename = matchCombo(event, shortcuts.rename);
         if (isRename) {
           const target = renameRef.current;
-          if (!target || hasBlockingDialog()) return;
+          if (!target || hasBlockingDialog()) {
+            logEvent("debug", "shortcut", "rename:blocked", { target: Boolean(target), dialog: hasBlockingDialog() });
+            return;
+          }
           stopHoldScroll(false);
           if (paletteOpenRef.current && palette) palette.set({ open: false });
           event.preventDefault();
@@ -4301,7 +4304,10 @@
         const isSessionMenu = matchCombo(event, shortcuts.sessionMenu);
         if (isSessionMenu) {
           const target = renameRef.current;
-          if (!target || hasBlockingDialog()) return;
+          if (!target || hasBlockingDialog()) {
+            logEvent("debug", "shortcut", "sessionMenu:blocked", { target: Boolean(target), dialog: hasBlockingDialog() });
+            return;
+          }
           stopHoldScroll(false);
           if (paletteOpenRef.current && palette) palette.set({ open: false });
           event.preventDefault();

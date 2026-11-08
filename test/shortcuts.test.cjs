@@ -274,6 +274,10 @@ function createVirtualDocument() {
       }
       return !event.defaultPrevented;
     },
+    /** Number of live listeners of a type, for diagnosing why a key did nothing. */
+    __listenerCount(type) {
+      return (listeners.get(type) || []).length;
+    },
     createElement(tag) {
       return new VirtualNode(tag, {}, [], doc);
     },
@@ -2016,7 +2020,9 @@ test('the session cycle follows the floating list order', () => {
 
 test('the session cycle starts from an end when the current session is not listed', () => {
   const harness = createHarness();
-  const saved = SESSION_FIXTURE.byId.s2;
+  /* Deep copy: the fixture is shared across tests, and a reference would be mutated by the
+     delete below, leaking "no current session" into every later test in this file. */
+  const saved = JSON.parse(JSON.stringify(SESSION_FIXTURE.byId.s2));
   try {
     delete SESSION_FIXTURE.byId.s2.retainedBy;
     harness.resetState();
@@ -3441,4 +3447,152 @@ test('the palette honours the include-archived setting', () => {
   harness.render();
   assert.equal(harness.services.calls.openSession.length, 1, 'the first visible row still opens');
   assert.notEqual(harness.services.calls.openSession[0], 's3', 'the hidden archived row is not reachable');
+});
+test('every default shortcut has its intended effect on a clean profile', () => {
+  /* A single pass over the shipped keymap on a fresh profile (empty storage, default settings),
+     so a change to DEFAULT_SETTINGS.shortcuts cannot silently break an action. */
+  const harness = createHarness();
+  /* The bundle runs in its own vm realm, so its plain objects have that realm's prototype and
+     fail a strict deepEqual against a literal here. Compare the serialized form instead. */
+  const keymap = JSON.parse(JSON.stringify(harness.settingsStore.getSnapshot().shortcuts));
+  assert.deepEqual(
+    keymap,
+    {
+      palette: 'alt+KeyK',
+      prev: 'alt+KeyI',
+      next: 'alt+Comma',
+      userPrev: 'alt+KeyU',
+      userNext: 'alt+KeyM',
+      scrollBottom: 'alt+KeyS',
+      sidebarBoard: 'alt+KeyN',
+      leftSidebar: 'alt+KeyW',
+      panelHalf: 'alt+KeyB',
+      panelFull: 'alt+KeyV',
+      rename: 'alt+KeyR',
+      interject: 'alt+Enter',
+      hud: 'alt+KeyE',
+      sessionMenu: 'alt+KeyD'
+    },
+    'the shipped keymap is what the matrix below exercises'
+  );
+  // One chat with a message above and below the viewport, a composer and a queued message.
+  const scroller = new VirtualNode('div', { class: 'native-scroll' }, [], harness.doc);
+  const flow = new VirtualNode('div', { 'data-slot': 'conversation.chat.flow' }, [], harness.doc);
+  flow.getBoundingClientRect = () => ({ width: 800, height: 600, top: 0, left: 0, right: 800, bottom: 600 });
+  scroller.appendChild(flow);
+  scroller.scrollHeight = 2000;
+  scroller.clientHeight = 600;
+  /* A real element clamps scrollTop to the scrollable range; the plugin relies on that when it
+     assigns scrollHeight as a "go to the very bottom" sentinel. */
+  let scrollTopValue = 400;
+  Object.defineProperty(scroller, 'scrollTop', {
+    get: () => scrollTopValue,
+    set: (value) => {
+      const max = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+      scrollTopValue = Math.min(Math.max(0, Number(value) || 0), max);
+    }
+  });
+  scroller.style = { scrollBehavior: 'smooth' };
+  scroller.getBoundingClientRect = () => ({ width: 800, height: 600, top: 0, left: 0, right: 800, bottom: 600 });
+  scroller.dispatchEvent = () => true;
+  function userRow(top) {
+    const node = new VirtualNode('div', { 'data-slot': 'conversation.chat.user.content' }, [], harness.doc);
+    node.getBoundingClientRect = () => ({ width: 600, height: 40, top, left: 0, right: 600, bottom: top + 40 });
+    const classes = new Set();
+    node.classList = { add: (name) => classes.add(name), remove: (name) => classes.delete(name), contains: (name) => classes.has(name) };
+    node.__classes = classes;
+    flow.appendChild(node);
+    return node;
+  }
+  const above = userRow(-200);
+  const below = userRow(900);
+  harness.doc.__addRoot(scroller);
+  const previousComputedStyle = harness.window.getComputedStyle;
+  harness.window.getComputedStyle = (node) => (node === scroller ? { overflowY: 'auto' } : { overflowY: 'visible' });
+
+  const composer = harness.makeEditable();
+  composer.getBoundingClientRect = () => ({ width: 320, height: 96, top: 600, left: 0, right: 320, bottom: 696 });
+  harness.doc.__addRoot(composer);
+
+  const dock = new VirtualNode('div', { 'data-queue-dock': '' }, [], harness.doc);
+  const queueRow = new VirtualNode('li', {}, [], harness.doc);
+  const steer = new VirtualNode('button', { 'aria-label': '插话发送' }, [], harness.doc);
+  let steers = 0;
+  steer.click = () => { steers += 1; };
+  queueRow.appendChild(steer);
+  dock.appendChild(queueRow);
+  harness.doc.__addRoot(dock);
+
+  harness.resetState();
+  harness.clearSpies();
+  harness.settingsStore.set({ log: Object.assign({}, harness.settingsStore.getSnapshot().log, { level: 'debug' }) });
+  harness.doc.activeElement = harness.doc.body;
+  const probeEvent = harness.pressCombo('alt+KeyR');
+  const probeLogs = harness.registrations.find((item) => item.spec.id === 'project-board-settings').spec.inject().hooks.logs.getSnapshot().entries;
+  console.log('DEBUG probe prevented=', probeEvent.defaultPrevented, 'rename=', JSON.stringify(harness.spies.requestRename), 'modals=', harness.doc.querySelectorAll('[aria-modal="true"]').length, 'logs=', JSON.stringify(probeLogs.filter((e) => e.scope === 'shortcut').slice(-4)));
+
+  // Alt+K opens the palette; the same combo closes it again.
+  harness.pressCombo('alt+KeyK');
+  assert.equal(harness.paletteOpen(), true, 'Alt+K opens the palette');
+  harness.pressCombo('alt+KeyK');
+  assert.equal(harness.paletteOpen(), false, 'Alt+K closes it again');
+
+  // Board modes.
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyN');
+  harness.pressCombo('alt+KeyB');
+  harness.pressCombo('alt+KeyV');
+  assert.deepEqual(harness.spies.toggleBoard, ['narrow', 'half', 'full'], 'Alt+N / Alt+B / Alt+V request the three board modes');
+
+  // Left sidebar.
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyW');
+  assert.deepEqual(harness.services.calls.layoutToggleSidebar, [true], 'Alt+W toggles the native sidebar');
+
+  // Floating list.
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyE');
+  assert.equal(harness.hudEvents().filter((type) => type === 'pbx-hud-toggle').length, 1, 'Alt+E toggles the floating list once');
+
+  // Dialog requests for the current session.
+  const logsOf = () => harness.registrations.find((item) => item.spec.id === 'project-board-settings').spec.inject().hooks.logs.getSnapshot().entries;
+  const logSettings = harness.settingsStore.getSnapshot().log;
+  harness.settingsStore.set({ log: Object.assign({}, logSettings, { level: 'debug' }) });
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyR');
+  console.log('DEBUG post-rename=', JSON.stringify(harness.spies.requestRename), JSON.stringify(logsOf().filter((e) => e.scope === 'shortcut').slice(-3)), 'modals=', harness.doc.querySelectorAll('[aria-modal="true"]').length);
+  harness.pressCombo('alt+KeyD');
+  assert.deepEqual(harness.spies.requestRename, [['s2', 'Beta']], 'Alt+R asks for a rename of the current session');
+  assert.deepEqual(harness.spies.requestSessionMenu, [['s2', 'Beta']], 'Alt+D asks for the session menu');
+  // Session cycle.
+  harness.clearSpies();
+  harness.pressCombo('alt+Comma');
+  harness.pressCombo('alt+KeyI');
+  /* The cycle position comes from the session the host reports as current (the fixture still
+     says s2 — openSession here is a stub), so next is s3 and previous is s1. */
+  assert.deepEqual(harness.services.calls.openSession, ['s3', 's1'], 'Alt+, / Alt+I walk the session cycle in both directions');
+
+  // Instruction jumps (tap, not hold).
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyU');
+  harness.window.dispatchEvent(new KeyboardEventShim('keyup', { code: 'KeyU', altKey: true, bubbles: true }));
+  assert.ok(above.__classes.has('pbx-user-jump-highlight'), 'Alt+U jumps to the instruction above');
+  harness.pressCombo('alt+KeyM');
+  harness.window.dispatchEvent(new KeyboardEventShim('keyup', { code: 'KeyM', altKey: true, bubbles: true }));
+  assert.ok(below.__classes.has('pbx-user-jump-highlight'), 'Alt+M jumps to the instruction below');
+
+  // Bottom + composer focus.
+  harness.doc.activeElement = harness.doc.body;
+  harness.pressCombo('alt+KeyS');
+  assert.equal(scroller.scrollTop, 1400, 'Alt+S scrolls to the bottom');
+  assert.equal(harness.doc.activeElement, composer, 'Alt+S focuses the composer');
+
+  // Interject the queued message.
+  harness.pressCombo('alt+Enter');
+  assert.equal(steers, 1, 'Alt+Enter steers the queued message once');
+
+  harness.window.getComputedStyle = previousComputedStyle;
+  harness.doc.__removeRoot(dock);
+  harness.doc.__removeRoot(composer);
+  harness.doc.__removeRoot(scroller);
 });

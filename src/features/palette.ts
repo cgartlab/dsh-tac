@@ -332,7 +332,10 @@ export function Palette(props: PaletteProps): unknown {
       const isRename = matchCombo(event as KeyEventLike, shortcuts.rename);
       if (isRename) {
         const target = renameRef.current;
-        if (!target || hasBlockingDialog()) return;
+        if (!target || hasBlockingDialog()) {
+          logEvent('debug', 'shortcut', 'rename:blocked', { target: Boolean(target), dialog: hasBlockingDialog() });
+          return;
+        }
         stopHoldScroll(false);
         if (paletteOpenRef.current && palette) palette.set({ open: false });
         event.preventDefault();
@@ -343,7 +346,10 @@ export function Palette(props: PaletteProps): unknown {
       const isSessionMenu = matchCombo(event as KeyEventLike, shortcuts.sessionMenu);
       if (isSessionMenu) {
         const target = renameRef.current;
-        if (!target || hasBlockingDialog()) return;
+        if (!target || hasBlockingDialog()) {
+          logEvent('debug', 'shortcut', 'sessionMenu:blocked', { target: Boolean(target), dialog: hasBlockingDialog() });
+          return;
+        }
         stopHoldScroll(false);
         if (paletteOpenRef.current && palette) palette.set({ open: false });
         event.preventDefault();

@@ -169,6 +169,7 @@ the conversation area) and plays a WebAudio chime; otherwise it uses the system
 | `shortcut` | `leftSidebar:blocked` | a real modal dialog owned the keystroke |
 | `shortcut` | `leftSidebar:duplicate` | a leaked listener from a hot reload already handled this press |
 | `shortcut` | `leftSidebar:acted` | the action ran; `acted:false` means the handler was not wired |
+| `shortcut` | `rename:blocked` / `sessionMenu:blocked` | debug level: the combo matched but there was no current session (`target:false`) or a modal owned the press (`dialog:true`) |
 | `sidebar` | `toggle` | which layout API answered (`layout.toggleSidebar` and friends) |
 | `sidebar` | `applied` / `no-change` | the frame's grid track and collapsed flag moved, or did not |
 | `sidebar` | `leave-fullscreen` | a fullscreen right panel was dismissed first, so the sidebar is visible |
