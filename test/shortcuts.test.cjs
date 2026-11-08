@@ -131,6 +131,9 @@ class VirtualNode {
     this.scrollTop = 0;
     this.scrollHeight = 0;
     this.clientHeight = 0;
+    /* The plugin reads these for drag/clamp maths; a layoutless node still has a box. */
+    this.offsetWidth = 120;
+    this.offsetHeight = 40;
     this.isContentEditable = this.attributes.contenteditable === 'true';
     for (const child of children || []) this.appendChild(child);
   }
@@ -2986,4 +2989,58 @@ test('opening the palette while a hold is running stops the scroll', () => {
   harness.paletteStore.set({ open: false, move: { dir: 0, at: 0 } });
   harness.window.dispatchEvent(new KeyboardEventShim('keyup', { code: 'KeyU', altKey: true, bubbles: true }));
   chat.restore();
+});
+test('dragging the floating list stores its position and follows it', () => {
+  const harness = createHarness();
+  const hud = harness.mountHud('hud');
+  harness.resetState();
+  harness.clearSpies();
+
+  const head = harness.doc.querySelector('.pbx-hudHead');
+  assert.ok(head, 'the floating list header is rendered');
+  const box = harness.doc.querySelector('.pbx-hud');
+  box.getBoundingClientRect = () => ({ width: 280, height: 200, top: 40, left: 40, right: 320, bottom: 240 });
+  box.offsetWidth = 280;
+  box.offsetHeight = 200;
+
+  head.props.onPointerDown({
+    button: 0,
+    clientX: 100,
+    clientY: 100,
+    target: head,
+    currentTarget: head,
+    preventDefault() {},
+    stopPropagation() {}
+  });
+  hud.render();
+
+  harness.window.dispatchEvent({ type: 'pointermove', clientX: 240, clientY: 300, bubbles: true });
+  hud.render();
+  harness.window.dispatchEvent({ type: 'pointerup', bubbles: true });
+  hud.render();
+
+  const raw = harness.window.localStorage.getItem('pbx.hud.pos');
+  assert.ok(raw, 'the dropped position is stored');
+  const pos = JSON.parse(raw);
+  assert.equal(pos.x, 180, 'the x follows the drag offset');
+  assert.equal(pos.y, 240, 'the y follows the drag offset');
+
+  const root = harness.doc.querySelector('.pbx-hud');
+  assert.equal(root.style.left, pos.x + 'px', 'the list is placed at the stored x');
+  assert.equal(root.style.top, pos.y + 'px', 'the list is placed at the stored y');
+});
+
+test('a stored position is honoured when the floating list mounts', () => {
+  const harness = createHarness();
+  harness.window.localStorage.setItem('pbx.hud.pos', JSON.stringify({ x: 120, y: 260 }));
+  const before = harness.settingsStore.getSnapshot();
+  harness.settingsStore.set({ hud: Object.assign({}, before.hud, { defaultPosition: 'last' }) });
+
+  const hud = harness.mountHud('hud');
+  hud.render();
+
+  const root = harness.doc.querySelector('.pbx-hud');
+  assert.ok(root, 'the floating list is rendered');
+  assert.equal(root.style.left, '120px', 'the stored x is restored');
+  assert.equal(root.style.top, '260px', 'the stored y is restored');
 });
