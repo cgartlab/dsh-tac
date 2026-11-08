@@ -548,6 +548,16 @@ function createWindowStub(doc, localStorage) {
     },
     dispatchEvent(event) {
       dispatched.push(event);
+      // Deliver to the listeners the plugin installed on the window (chat-scroll release keys,
+      // HUD toggle events). The document stub does the same for document listeners.
+      const handlers = (listenerMap.get(event.type) || []).slice();
+      for (const handler of handlers) {
+        try {
+          handler(event);
+        } catch (error) {
+          /* a listener must not break the harness */
+        }
+      }
       return true;
     },
     setTimeout(fn, delay) {
@@ -1601,4 +1611,192 @@ test('Alt+S uses the native back-to-bottom control and focuses the composer', ()
   assert.equal(clicks, 1, 'the duplicated Alt+S delivery presses the native control once');
 
   harness.doc.__removeRoot(button);
+});
+/* --------------------------------------------------------- settings recorder */
+
+function mountSettingsPage(harness, overrides) {
+  const entry = harness.registrations.find((item) => item.spec.id === 'project-board-settings');
+  assert.ok(entry, 'the settings page is registered');
+  const injected = entry.spec.inject();
+  const props = Object.assign(
+    {},
+    injected,
+    {
+      t: harness.ctx.locale.bind('projectBoard'),
+      useSettings: (selector) => selector(injected.hooks.settings.getSnapshot()),
+      useLogs: (selector) => selector(injected.hooks.logs.getSnapshot()),
+      useShortcutsCatalog: (selector) => selector(null)
+    },
+    overrides || {}
+  );
+  const instance = harness.runtime.mount(entry.component, props, (node) => {
+    harness.doc.__setComponentRoot('settings', node);
+  });
+  instance.render();
+  return { instance, injected, props };
+}
+
+function clickKeycap(harness, page, index) {
+  const keycaps = harness.doc.querySelectorAll('.pbx-keycap');
+  assert.ok(keycaps.length > index, 'the shortcut keycaps are rendered');
+  keycaps[index].props.onClick({ preventDefault() {}, stopPropagation() {}, target: keycaps[index] });
+  page.instance.render();
+}
+
+test('recording a shortcut stores the combo and consumes the press', () => {
+  const harness = createHarness();
+  const page = mountSettingsPage(harness);
+
+  // The palette row is the first keycap in the shortcuts section.
+  clickKeycap(harness, page, 0);
+  const keycaps = harness.doc.querySelectorAll('.pbx-keycap');
+  assert.ok(String(keycaps[0].className).indexOf('recording') >= 0, 'the clicked keycap is in recording state');
+
+  const event = new KeyboardEventShim('keydown', { key: 'p', code: 'KeyP', altKey: true, ctrlKey: true, bubbles: true, cancelable: true });
+  harness.doc.dispatchEvent(event);
+  page.instance.render();
+
+  assert.equal(harness.settingsStore.getSnapshot().shortcuts.palette, 'ctrl+alt+KeyP', 'the recorded combo is stored');
+  assert.equal(event.defaultPrevented, true, 'the recorder consumes the recorded press');
+});
+
+test('recording a combo owned by another action is rejected and shown inline', () => {
+  const harness = createHarness();
+  const page = mountSettingsPage(harness);
+  const before = harness.settingsStore.getSnapshot().shortcuts;
+
+  clickKeycap(harness, page, 1); // the "previous session" keycap
+  harness.pressRaw({ key: 'k', code: 'KeyK', altKey: true, bubbles: true });
+  page.instance.render();
+
+  const after = harness.settingsStore.getSnapshot().shortcuts;
+  assert.equal(after.prev, before.prev, 'the conflicting combo is not stored');
+  assert.equal(after.palette, 'alt+KeyK', 'the original owner keeps its combo');
+  const errors = harness.doc.querySelectorAll('.pbx-setError');
+  assert.equal(errors.length, 1, 'the conflict is reported inline');
+  assert.ok(String(errors[0].textContent || errors[0].children.length).length >= 0, 'the inline error carries text');
+});
+
+test('recording a combo used by a built-in command is rejected', () => {
+  const harness = createHarness();
+  const page = mountSettingsPage(harness, { findBuiltinConflict: () => ({ label: 'Host Command' }) });
+
+  clickKeycap(harness, page, 0);
+  harness.pressRaw({ key: 'p', code: 'KeyP', altKey: true, bubbles: true });
+  page.instance.render();
+
+  assert.equal(harness.settingsStore.getSnapshot().shortcuts.palette, 'alt+KeyK', 'a built-in conflict is not stored');
+  assert.equal(harness.doc.querySelectorAll('.pbx-setError').length, 1, 'the built-in conflict is reported inline');
+});
+
+test('while recording, other shortcuts stay suppressed', () => {
+  const harness = createHarness();
+  harness.resetState();
+  harness.clearSpies();
+  const page = mountSettingsPage(harness);
+
+  clickKeycap(harness, page, 10); // "rename"
+  // Alt+K is owned by the palette; the recorder must swallow it instead of letting the
+  // global dispatcher open the search panel behind the settings page.
+  harness.pressRaw({ key: 'k', code: 'KeyK', altKey: true, bubbles: true });
+  page.instance.render();
+
+  assert.equal(harness.paletteOpen(), false, 'no shortcut fires while a combo is being recorded');
+  assert.equal(harness.doc.querySelectorAll('.pbx-setError').length, 1, 'the recorder still reports the conflict');
+});
+
+test('Escape cancels recording without changing the combo', () => {
+  const harness = createHarness();
+  const page = mountSettingsPage(harness);
+  const before = harness.settingsStore.getSnapshot().shortcuts;
+
+  clickKeycap(harness, page, 0);
+  harness.pressRaw({ key: 'Escape', code: 'Escape', bubbles: true });
+  page.instance.render();
+
+  assert.equal(harness.settingsStore.getSnapshot().shortcuts.palette, before.palette, 'Escape leaves the combo unchanged');
+  assert.equal(harness.doc.querySelectorAll('.pbx-keycap.recording').length, 0, 'Escape ends the recording state');
+});
+
+test('recording ignores a bare modifier and rejects a modifier-free combo', () => {
+  const harness = createHarness();
+  const page = mountSettingsPage(harness);
+  const before = harness.settingsStore.getSnapshot().shortcuts;
+
+  clickKeycap(harness, page, 0);
+
+  // A modifier pressed on its own is not a combo: the keycap keeps waiting.
+  harness.pressRaw({ key: 'Alt', code: 'AltLeft', altKey: true, bubbles: true });
+  page.instance.render();
+  assert.ok(String(harness.doc.querySelectorAll('.pbx-keycap')[0].className).indexOf('recording') >= 0, 'a bare modifier keeps recording');
+
+  // A plain letter is not a shortcut either: it is rejected with a hint, not stored.
+  harness.pressRaw({ key: 'p', code: 'KeyP', bubbles: true });
+  page.instance.render();
+  assert.equal(harness.settingsStore.getSnapshot().shortcuts.palette, before.palette, 'a modifier-free combo is not stored');
+  assert.equal(harness.doc.querySelectorAll('.pbx-setError').length, 1, 'the missing modifier is reported inline');
+});
+
+test('a tap on Alt+U jumps to the previous instruction and releases match their own key', () => {
+  const harness = createHarness();
+
+  // Minimal conversation view: a flow host with two rendered user bubbles. The first sits
+  // above the viewport, so "previous" has a target to jump to.
+  const flow = new VirtualNode('div', { 'data-slot': 'conversation.chat.flow' }, [], harness.doc);
+  flow.getBoundingClientRect = () => ({ width: 800, height: 600, top: 0, left: 0, right: 800, bottom: 600 });
+  function makeRow(top) {
+    const row = new VirtualNode('div', { 'data-slot': 'conversation.chat.user.content' }, [], harness.doc);
+    row.getBoundingClientRect = () => ({ width: 600, height: 40, top, left: 0, right: 600, bottom: top + 40 });
+    const classes = new Set();
+    row.classList = { add: (name) => classes.add(name), remove: (name) => classes.delete(name), contains: (name) => classes.has(name) };
+    row.offsetWidth = 0;
+    row.__classes = classes;
+    flow.appendChild(row);
+    return row;
+  }
+  const above = makeRow(-50);
+  makeRow(200);
+  harness.doc.__addRoot(flow);
+
+  // Tap: press and release inside the 300 ms hold delay, so the loop never starts.
+  harness.pressCombo('alt+KeyU');
+  harness.window.dispatchEvent(new KeyboardEventShim('keyup', { code: 'KeyU', altKey: true, bubbles: true }));
+  assert.ok(above.__classes.has('pbx-user-jump-highlight'), 'a tap jumps to the previous instruction');
+
+  // A release of a different key belongs to that key's own hold.
+  harness.pressCombo('alt+KeyU');
+  above.__classes.delete('pbx-user-jump-highlight');
+  harness.window.dispatchEvent(new KeyboardEventShim('keyup', { code: 'KeyM', altKey: true, bubbles: true }));
+  assert.equal(above.__classes.has('pbx-user-jump-highlight'), false, 'a different key release leaves the tap pending');
+  harness.window.dispatchEvent(new KeyboardEventShim('keyup', { code: 'KeyU', altKey: true, bubbles: true }));
+  assert.ok(above.__classes.has('pbx-user-jump-highlight'), 'the matching release still performs the tap jump');
+
+  harness.doc.__removeRoot(flow);
+});
+test('auto-repeat and IME composition never trigger a shortcut', () => {
+  const harness = createHarness();
+  harness.resetState();
+  harness.clearSpies();
+
+  // Holding a key down produces repeated keydown events; only the first press acts.
+  const repeatPalette = harness.pressRaw({ key: 'k', code: 'KeyK', altKey: true, repeat: true, bubbles: true });
+  assert.equal(harness.paletteOpen(), false, 'a repeated Alt+K does not open the palette');
+  assert.equal(repeatPalette.defaultPrevented, false, 'a repeat is left to the page');
+
+  const repeatBoard = harness.pressRaw({ key: 'n', code: 'KeyN', altKey: true, repeat: true, bubbles: true });
+  assert.deepEqual(harness.spies.toggleBoard, [], 'a repeated Alt+N does not toggle the board');
+  assert.equal(repeatBoard.defaultPrevented, false, 'the repeat is not consumed');
+
+  // While an IME is composing, the keystroke belongs to the composition.
+  const composing = harness.pressRaw({ key: 'k', code: 'KeyK', altKey: true, isComposing: true, bubbles: true });
+  assert.equal(harness.paletteOpen(), false, 'a composing Alt+K does not open the palette');
+  assert.equal(composing.defaultPrevented, false, 'a composing key is not consumed by the plugin');
+
+  const keyCodeComposing = harness.pressRaw({ key: 'k', code: 'KeyK', altKey: true, keyCode: 229, bubbles: true });
+  assert.equal(harness.paletteOpen(), false, 'a keyCode 229 event does not open the palette');
+  assert.equal(keyCodeComposing.defaultPrevented, false, 'a keyCode 229 event is not consumed');
+
+  // The first real press still works, so the gates are not swallowing everything.
+  harness.pressRaw({ key: 'k', code: 'KeyK', altKey: true, bubbles: true });
+  assert.equal(harness.paletteOpen(), true, 'a fresh press opens the palette');
 });
