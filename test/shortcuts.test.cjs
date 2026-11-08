@@ -1453,3 +1453,66 @@ test('palette open: board and dialog shortcuts dismiss it and still act once', (
   assert.equal(harness.paletteOpen(), false, 'Alt+D dismisses the palette');
   assert.deepEqual(harness.spies.requestSessionMenu, [['s2', 'Beta']], 'Alt+D requests the session menu once');
 });
+
+test('a remapped shortcut takes effect at once and frees the old combo', () => {
+  const harness = createHarness();
+  const before = harness.settingsStore.getSnapshot();
+  const next = JSON.parse(JSON.stringify(before));
+  next.shortcuts.palette = 'ctrl+alt+KeyP';
+  harness.settingsStore.set(next);
+  harness.render();
+
+  harness.resetState();
+  harness.clearSpies();
+
+  // The old combo is no longer configured, so the page keeps it.
+  const oldEvent = harness.pressRaw({ key: 'k', code: 'KeyK', altKey: true, bubbles: true });
+  assert.equal(harness.paletteOpen(), false, 'the previous palette combo no longer opens it');
+  assert.equal(oldEvent.defaultPrevented, false, 'the previous palette combo is no longer consumed');
+
+  // The recorded combo works immediately, without a plugin reload.
+  harness.pressRaw({ key: 'p', code: 'KeyP', altKey: true, ctrlKey: true, bubbles: true });
+  assert.equal(harness.paletteOpen(), true, 'the remapped combo opens the palette without a reload');
+});
+test('palette open: every other default combo is consumed without acting', () => {
+  const harness = createHarness();
+  const shortcuts = harness.settingsStore.getSnapshot().shortcuts;
+  const composer = harness.makeEditable();
+  harness.doc.__addRoot(composer);
+
+  // Policy (docs/architecture.md): while the palette is open, only its own keys work. The
+  // rename / session-menu / board keys dismiss it first and then act once (covered above);
+  // every other combo must be consumed and ignored so no Option character or side effect
+  // reaches the page.
+  const inert = [
+    { id: 'userPrev', extra: (start) => assert.equal(holdTimers(harness, start), 0, 'Alt+U arms no hold while the palette is open') },
+    { id: 'userNext', extra: (start) => assert.equal(holdTimers(harness, start), 0, 'Alt+M arms no hold while the palette is open') },
+    { id: 'scrollBottom', extra: () => assert.notEqual(harness.doc.activeElement, composer, 'Alt+S does not focus the composer behind the palette') },
+    { id: 'hud', extra: () => assert.deepEqual(harness.hudEvents(), [], 'Alt+E dispatches no HUD toggle behind the palette') },
+    { id: 'interject', extra: () => assert.equal(harness.spies.notify.length, 0, 'Alt+Enter does not report an empty queue behind the palette') }
+  ];
+
+  function holdTimers(target, start) {
+    return target.window.__timers.slice(start).filter((timer) => timer.delay === 300).length;
+  }
+
+  for (const item of inert) {
+    harness.resetState();
+    harness.clearSpies();
+    harness.pressCombo(shortcuts.palette);
+    assert.equal(harness.paletteOpen(), true, 'the palette is open before ' + item.id);
+    const start = harness.timerCount();
+    const event = harness.pressCombo(shortcuts[item.id]);
+    assert.equal(event.defaultPrevented, true, shortcuts[item.id] + ' (' + item.id + ') is consumed while the palette is open');
+    assert.equal(harness.paletteOpen(), true, shortcuts[item.id] + ' (' + item.id + ') leaves the palette open');
+    item.extra(start);
+  }
+
+  // The sidebar key follows the board policy: dismiss the palette, then toggle once.
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo(shortcuts.palette);
+  harness.pressCombo(shortcuts.leftSidebar);
+  assert.equal(harness.paletteOpen(), false, 'Alt+W dismisses the palette');
+  assert.deepEqual(harness.spies.toggleLeftSidebar, [true], 'Alt+W still toggles the sidebar once');
+});
