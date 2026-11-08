@@ -1516,3 +1516,89 @@ test('palette open: every other default combo is consumed without acting', () =>
   assert.equal(harness.paletteOpen(), false, 'Alt+W dismisses the palette');
   assert.deepEqual(harness.spies.toggleLeftSidebar, [true], 'Alt+W still toggles the sidebar once');
 });
+test('Alt+Enter steers the earliest queued message exactly once', () => {
+  const harness = createHarness();
+  const dock = new VirtualNode('div', { 'data-queue-dock': '' }, [], harness.doc);
+  const echo = new VirtualNode('li', { 'data-submission-echo': '' }, [], harness.doc);
+  const first = new VirtualNode('li', {}, [], harness.doc);
+  const firstButton = new VirtualNode('button', { 'aria-label': '插话发送' }, [], harness.doc);
+  const second = new VirtualNode('li', {}, [], harness.doc);
+  const secondButton = new VirtualNode('button', { 'aria-label': '插话发送' }, [], harness.doc);
+  let firstClicks = 0;
+  let secondClicks = 0;
+  firstButton.click = () => { firstClicks += 1; };
+  secondButton.click = () => { secondClicks += 1; };
+  first.appendChild(firstButton);
+  second.appendChild(secondButton);
+  dock.appendChild(echo);
+  dock.appendChild(first);
+  dock.appendChild(second);
+  harness.doc.__addRoot(dock);
+
+  // The submission echo row is not a pending message: the first steerable row must win, and a
+  // duplicated delivery (leaked listener) must not steer a second message.
+  const event = new KeyboardEventShim('keydown', { key: 'Enter', code: 'Enter', altKey: true, bubbles: true, cancelable: true });
+  harness.doc.dispatchEvent(event);
+  harness.doc.dispatchEvent(event);
+  harness.render();
+
+  assert.equal(firstClicks, 1, 'the earliest queued message is steered once');
+  assert.equal(secondClicks, 0, 'later queued messages are left alone');
+  assert.equal(harness.spies.notify.length, 0, 'a successful steer raises no warning');
+  assert.equal(event.defaultPrevented, true, 'Alt+Enter is consumed when a message is steered');
+
+  harness.doc.__removeRoot(dock);
+});
+
+test('Alt+Enter expands a collapsed queue dock and then steers', () => {
+  const harness = createHarness();
+  const dock = new VirtualNode('div', { 'data-queue-dock': '' }, [], harness.doc);
+  const header = new VirtualNode('button', { 'aria-controls': 'queue', 'aria-expanded': 'false' }, [], harness.doc);
+  let headerClicks = 0;
+  header.click = () => { headerClicks += 1; };
+  dock.appendChild(header);
+  harness.doc.__addRoot(dock);
+
+  harness.pressRaw({ key: 'Enter', code: 'Enter', altKey: true, bubbles: true });
+  assert.equal(headerClicks, 1, 'a collapsed dock is expanded once');
+  assert.equal(harness.spies.notify.length, 0, 'expanding the dock is not reported as an empty queue');
+
+  // The host renders the rows after the expansion; the deferred retry then steers the message.
+  const row = new VirtualNode('li', {}, [], harness.doc);
+  const steer = new VirtualNode('button', { 'aria-label': '插话发送' }, [], harness.doc);
+  let steerClicks = 0;
+  steer.click = () => { steerClicks += 1; };
+  row.appendChild(steer);
+  dock.appendChild(row);
+  harness.runTimers();
+  assert.equal(steerClicks, 1, 'the deferred retry steers the newly rendered message');
+
+  harness.doc.__removeRoot(dock);
+});
+test('Alt+S uses the native back-to-bottom control and focuses the composer', () => {
+  const harness = createHarness();
+  const button = new VirtualNode('button', { 'aria-label': '回到底部' }, [], harness.doc);
+  button.getBoundingClientRect = () => ({ width: 24, height: 24, top: 0, left: 0, right: 24, bottom: 24 });
+  let clicks = 0;
+  button.click = () => { clicks += 1; };
+  harness.doc.__addRoot(button);
+
+  const composer = harness.makeEditable();
+  composer.getBoundingClientRect = () => ({ width: 320, height: 96, top: 600, left: 0, right: 320, bottom: 696 });
+  harness.doc.__addRoot(composer);
+  harness.doc.activeElement = harness.doc.body;
+
+  harness.pressCombo('alt+KeyS');
+  assert.equal(clicks, 1, 'the native back-to-bottom control is pressed once');
+  assert.equal(harness.doc.activeElement, composer, 'the conversation composer receives focus');
+
+  // A duplicated delivery must not re-run the focus/scroll dance.
+  clicks = 0;
+  const event = new KeyboardEventShim('keydown', { key: 's', code: 'KeyS', altKey: true, bubbles: true, cancelable: true });
+  harness.doc.dispatchEvent(event);
+  harness.doc.dispatchEvent(event);
+  harness.render();
+  assert.equal(clicks, 1, 'the duplicated Alt+S delivery presses the native control once');
+
+  harness.doc.__removeRoot(button);
+});
