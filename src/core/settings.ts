@@ -65,6 +65,12 @@ export function mergeSettings(base: Settings, raw: unknown): Settings {
     }
     if (stored.shortcutsVersion !== 1) out.shortcuts = healShortcutConflicts(out.shortcuts);
   }
+  /* Duplicates can appear without the one-time migration: a new action's default may collide
+     with a combo the user had already remapped another action to (that is exactly how the
+     left-sidebar action arrived). A duplicate is never legitimate — the first matching branch
+     wins and the other shortcut looks dead — and the recorder itself rejects duplicates, so
+     this only ever repairs. Healing is idempotent: unique bindings pass through untouched. */
+  out.shortcuts = healShortcutConflicts(out.shortcuts);
   return out;
 }
 

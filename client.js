@@ -278,6 +278,7 @@
       }
       if (stored.shortcutsVersion !== 1) out.shortcuts = healShortcutConflicts(out.shortcuts);
     }
+    out.shortcuts = healShortcutConflicts(out.shortcuts);
     return out;
   }
   function healShortcutConflicts(shortcuts) {

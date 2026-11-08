@@ -523,13 +523,15 @@ function createReactRuntime(doc) {
 
 /* ================================================================ the harness */
 
-function createLocalStorage() {
-  const data = new Map();
+function createLocalStorage(initial) {
+  const data = new Map(Object.entries(initial || {}));
   return {
     getItem: (key) => (data.has(key) ? data.get(key) : null),
     setItem: (key, value) => { data.set(key, String(value)); },
     removeItem: (key) => { data.delete(key); },
-    clear: () => data.clear()
+    clear: () => data.clear(),
+    /** Everything the plugin persisted, so a test can inspect or re-seed it. */
+    __dump: () => Object.fromEntries(data)
   };
 }
 
@@ -731,7 +733,7 @@ function comboInit(combo) {
 
 function createHarness(options) {
   const doc = createVirtualDocument();
-  const localStorage = createLocalStorage();
+  const localStorage = createLocalStorage(options && options.storage);
   const win = createWindowStub(doc, localStorage);
   const services = createServices();
   /* A host build may expose fewer services; overrides are applied before apply() captures them. */
@@ -2581,4 +2583,90 @@ test('the built-in conflict check skips catalog rows that already report conflic
   page.instance.render();
   assert.equal(harness.settingsStore.getSnapshot().shortcuts.next, 'alt+Comma', 'a clean catalog row still rejects the combo');
   assert.equal(harness.doc.querySelectorAll('.pbx-setError').length, 1, 'the rejection is reported inline');
+});
+function sidebarLogEntries(harness) {
+  const entry = harness.registrations.find((item) => item.spec.id === 'project-board-settings');
+  return entry.spec.inject().hooks.logs.getSnapshot().entries;
+}
+
+test('Alt+W records whether the toggle actually moved the layout', () => {
+  const harness = createHarness();
+  const frame = new VirtualNode('div', { class: '_frame' }, [], harness.doc);
+  frame.style = { gridTemplateColumns: '280px 1fr' };
+  frame.attributes.style = 'grid-template-columns: 280px 1fr';
+  harness.doc.__addRoot(frame);
+  harness.services.layout.toggleSidebar = () => {
+    frame.style.gridTemplateColumns = '0px 1fr';
+    frame.attributes.style = 'grid-template-columns: 0px 1fr';
+    frame.attributes['data-sidebar-collapsed'] = '';
+  };
+  harness.resetState();
+  harness.clearSpies();
+
+  let mark = sidebarLogEntries(harness).length;
+  harness.pressCombo('alt+KeyW');
+  harness.runTimers();
+  let added = sidebarLogEntries(harness).slice(mark).filter((entry) => entry.scope === 'sidebar');
+  const applied = added.find((entry) => entry.message === 'applied');
+  assert.ok(applied, 'a toggle that moved the frame is recorded as applied');
+  assert.equal(applied.data.before.track, 280, 'the recorded before-state carries the old track');
+  assert.equal(applied.data.after.track, 0, 'the recorded after-state carries the new track');
+
+  // A host API that runs but changes nothing is the "key did nothing" case: warn, not info.
+  harness.services.layout.toggleSidebar = () => {};
+  mark = sidebarLogEntries(harness).length;
+  harness.pressCombo('alt+KeyW');
+  harness.runTimers();
+  added = sidebarLogEntries(harness).slice(mark).filter((entry) => entry.scope === 'sidebar');
+  const noChange = added.find((entry) => entry.message === 'no-change');
+  assert.ok(noChange, 'a silent host API is recorded as no-change');
+  assert.equal(noChange.level, 'warn', 'no-change is a warning so it stands out in the log');
+
+  // Without a frame to compare there is nothing to verify: claim that honestly.
+  harness.doc.__removeRoot(frame);
+  mark = sidebarLogEntries(harness).length;
+  harness.pressCombo('alt+KeyW');
+  harness.runTimers();
+  added = sidebarLogEntries(harness).slice(mark).filter((entry) => entry.scope === 'sidebar');
+  assert.ok(added.some((entry) => entry.message === 'unverified'), 'a missing frame is recorded as unverified');
+});
+
+test('Alt+E is harmless when no floating list is mounted', () => {
+  const harness = createHarness();
+  harness.resetState();
+  harness.clearSpies();
+
+  assert.doesNotThrow(() => harness.pressCombo('alt+KeyE'), 'Alt+E must not throw without a mounted list');
+  assert.equal(harness.hudEvents().filter((type) => type === 'pbx-hud-toggle').length, 1, 'the toggle event is dispatched once');
+});
+test('duplicate shortcut bindings are healed when settings load', () => {
+  // Persist a real settings blob first so the test does not have to hard-code the storage key.
+  const seed = createHarness();
+  const page = mountSettingsPage(seed);
+  clickKeycap(seed, page, 1); // "previous session"
+  seed.pressRaw({ key: 'z', code: 'KeyZ', altKey: true, bubbles: true });
+  page.instance.render();
+
+  const dump = seed.window.localStorage.__dump();
+  const key = Object.keys(dump).find((name) => {
+    try {
+      const value = JSON.parse(dump[name]);
+      return Boolean(value && typeof value === 'object' && value.shortcuts);
+    } catch (error) {
+      return false;
+    }
+  });
+  assert.ok(key, 'the settings blob was persisted');
+
+  const stored = JSON.parse(dump[key]);
+  assert.equal(stored.shortcutsVersion, 1, 'the stored blob already carries the migration marker');
+  assert.equal(stored.shortcuts.prev, 'alt+KeyZ', 'the custom combo was saved');
+  stored.shortcuts.next = 'alt+KeyZ'; // a duplicate the one-time migration can never see again
+
+  const fresh = createHarness({ storage: { [key]: JSON.stringify(stored) } });
+  const shortcuts = fresh.settingsStore.getSnapshot().shortcuts;
+  const owners = Object.keys(shortcuts).filter((action) => shortcuts[action] === 'alt+KeyZ');
+  assert.equal(owners.length, 1, 'only one action keeps the duplicated combo');
+  assert.equal(shortcuts.prev, 'alt+KeyZ', 'the earlier action keeps its combo');
+  assert.equal(shortcuts.next, 'alt+Comma', 'the later action falls back to its own default');
 });
