@@ -7171,6 +7171,7 @@
         const full = rightbarFullscreen();
         if (mode === "full") {
           if (visible && expanded && full) {
+            if (rightbarFullscreen()) toggleRightbarFullscreen();
             sidebarRight.toggleExpanded();
             return;
           }

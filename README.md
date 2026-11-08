@@ -61,7 +61,7 @@ physical Option key. On Windows and Linux the same combinations are shown as `Al
 | `⌥+I` / `⌥+,` | Previous / next session |
 | `⌥+U` / `⌥+M` | Previous / next user instruction (tap to jump, hold to scroll) |
 | `⌥+S` | Scroll to bottom and focus the composer |
-| `⌥+D` | Session actions dialog (archive, cancel a running turn, delete where supported) |
+| `⌥+D` | Session actions dialog (archive; delete where the host exposes it) |
 | `⌥+N` / `⌥+B` / `⌥+V` | Board at narrow / medium / fullscreen; same key closes |
 | `⌥+W` | Show / hide the native left sidebar; leaves a fullscreen board first |
 | `⌥+R` | Rename the current session |
@@ -108,9 +108,8 @@ runtime dependencies of its own; host-half `index.js` is intentionally a no-op.
 
 ## Known limitations
 
-- Session deletion depends on the client contract; this build of DeepSeek Harness only
-  exposes archive and turn cancellation, so the session dialog disables delete and points
-  to archive instead.
+- Session deletion depends on the client contract; this build of DeepSeek Harness does not
+  expose it, so the session dialog disables delete and points to archive instead.
 - Archiving a session that is still running is rejected by the host; the dialog surfaces
   the error rather than forcing it.
 - System notifications follow the OS/browser notification permission and the harness

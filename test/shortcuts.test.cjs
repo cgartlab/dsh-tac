@@ -3640,3 +3640,29 @@ test('layout keys dismiss the palette while overlay keys are ignored', () => {
   assert.equal(harness.hudEvents().length, 0, 'no floating-list toggle fires behind the palette');
   assert.equal(harness.paletteOpen(), true, 'and the palette stays open');
 });
+test('the same board key closes each mode it opened', () => {
+  const harness = createHarness();
+  const state = connectBoardPane(harness);
+
+  // Half width.
+  harness.resetState();
+  harness.pressCombo('alt+KeyB');
+  assert.equal(state.expanded, true, 'Alt+B opens the pane');
+  assert.equal(state.width, 720, 'at half of the 1440px window');
+  harness.pressCombo('alt+KeyB');
+  assert.equal(state.expanded, false, 'the same key closes the half pane');
+
+  // Fullscreen.
+  harness.pressCombo('alt+KeyV');
+  assert.equal(state.fullscreen, true, 'Alt+V goes fullscreen');
+  harness.pressCombo('alt+KeyV');
+  assert.equal(state.fullscreen, false, 'the same key leaves fullscreen');
+  assert.equal(state.expanded, false, 'and the pane closes rather than staying open');
+
+  // Narrow.
+  harness.pressCombo('alt+KeyN');
+  assert.equal(state.expanded, true, 'Alt+N opens the pane');
+  assert.equal(state.width, 380, 'at the narrow width');
+  harness.pressCombo('alt+KeyN');
+  assert.equal(state.expanded, false, 'the same key closes the narrow pane');
+});

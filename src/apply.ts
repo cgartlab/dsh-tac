@@ -535,7 +535,10 @@ export function apply(ctx: HostContext): void {
       const full = rightbarFullscreen();
       if (mode === 'full') {
         if (visible && expanded && full) {
-          /* Same key again closes the panel, like the narrow/medium toggles. */
+          /* Same key again closes the panel, like the narrow/medium toggles. Leave the
+             fullscreen presentation first for the same reason Alt+W does: collapsing a
+             fullscreen right bar can otherwise leave it covering the page. */
+          if (rightbarFullscreen()) toggleRightbarFullscreen();
           sidebarRight.toggleExpanded();
           return;
         }

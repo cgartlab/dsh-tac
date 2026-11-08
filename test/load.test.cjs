@@ -309,3 +309,29 @@ test('the narrow board is a fixed width, so Alt+N opens narrow and closes on the
   const thresholdUses = source.match(/<= BOARD_NARROW_MAX \? "narrow"/g) || [];
   assert.equal(thresholdUses.length, 2);
 });
+test('both READMEs document every shipped default shortcut', () => {
+  /* Drift guard: the user-facing shortcut tables are prose, so nothing stopped them from going
+     stale when a default changed. Parse the source of truth and require each combo to appear
+     (backticked, in ⌥ notation) in both READMEs. */
+  const constants = fs.readFileSync(path.join(root, 'src/constants.ts'), 'utf8');
+  const start = constants.indexOf('shortcuts: {');
+  assert.ok(start > 0, 'the shortcuts block exists in constants.ts');
+  const block = constants.slice(start, constants.indexOf('}', start) + 1);
+  const combos = Array.from(block.matchAll(/\w+: '(alt\+[^']+)'/g)).map((match) => match[1]);
+  assert.equal(combos.length, 14, 'all fourteen default combos were parsed');
+  const display = (combo) => {
+    const code = combo.split('+')[1];
+    if (/^Key[A-Z]$/.test(code)) return '⌥+' + code.slice(3);
+    if (code === 'Comma') return '⌥+,';
+    return '⌥+' + code;
+  };
+  const keys = Array.from(new Set(combos.map(display)));
+  assert.equal(keys.length, 14, 'the display forms are distinct');
+
+  for (const file of ['README.md', 'README.zh.md']) {
+    const text = fs.readFileSync(path.join(root, file), 'utf8');
+    for (const key of keys) {
+      assert.ok(text.includes('`' + key + '`'), file + ' documents ' + key);
+    }
+  }
+});
