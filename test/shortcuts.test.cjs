@@ -666,7 +666,11 @@ function createContext(doc, services) {
   const effects = [];
   const ctx = {
     locale: {
-      register(namespace, dicts) { translations[namespace] = dicts; },
+      register(namespace, dicts) {
+        // The host merges the plugin's locale dictionaries; the stub keeps the English side so
+        // text assertions see real strings and {placeholders} are interpolated.
+        translations[namespace] = Object.assign({}, (dicts && (dicts.en || dicts.zh)) || {}, translations[namespace] || {});
+      },
       bind(namespace) {
         return (key, params) => {
           const table = (translations[namespace] || {})[key] ? (translations[namespace] || {}) : null;
@@ -2740,31 +2744,37 @@ function mountReturnedForm(harness, component, props, rootKey) {
   instance.render();
   return instance;
 }
+const tick = () => new Promise((resolve) => setImmediate(resolve));
+
 /* ------------------------------------------------- plugin-owned dialogs (modal) */
 
-function mountRenameDialog(harness, request) {
+function mountRenameDialog(harness, request, overrides) {
   const entry = harness.registrations.find((item) => item.spec.id === 'project-board-rename');
   assert.ok(entry, 'the rename dialog is registered');
   const injected = entry.spec.inject();
   injected.rename.set({ sessionId: request.sessionId, currentTitle: request.currentTitle, at: Date.now() });
-  const props = Object.assign({}, injected, {
-    useRename: (selector) => selector(injected.hooks.rename.getSnapshot()),
-    t: harness.ctx.locale.bind('projectBoard')
-  });
+  const props = Object.assign(
+    {},
+    injected,
+    { useRename: (selector) => selector(injected.hooks.rename.getSnapshot()), t: harness.ctx.locale.bind('projectBoard') },
+    overrides || {}
+  );
   // convertTree treats nested components as opaque, so mount the form the dialog returns.
   const instance = mountReturnedForm(harness, entry.component, props, 'rename');
   return { instance, injected };
 }
 
-function mountSessionMenu(harness, request) {
+function mountSessionMenu(harness, request, overrides) {
   const entry = harness.registrations.find((item) => item.spec.id === 'project-board-session-menu');
   assert.ok(entry, 'the session menu is registered');
   const injected = entry.spec.inject();
   injected.hooks.sessionMenu.set({ sessionId: request.sessionId, title: request.title, at: Date.now() });
-  const props = Object.assign({}, injected, {
-    useSessionMenu: (selector) => selector(injected.hooks.sessionMenu.getSnapshot()),
-    t: harness.ctx.locale.bind('projectBoard')
-  });
+  const props = Object.assign(
+    {},
+    injected,
+    { useSessionMenu: (selector) => selector(injected.hooks.sessionMenu.getSnapshot()), t: harness.ctx.locale.bind('projectBoard') },
+    overrides || {}
+  );
   const instance = mountReturnedForm(harness, entry.component, props, 'session-menu');
   return { instance, injected };
 }
@@ -2812,4 +2822,110 @@ test('an open session menu leaves every shortcut to the dialog', () => {
   const archive = harness.doc.querySelectorAll('.pbx-menuOption')[0];
   assert.equal(archive.disabled, false, 'archive stays available');
   assert.equal(menu.injected.deleteSupported, false, 'the injected capability flag agrees');
+});
+test('submitting a rename trims, saves once and closes the dialog', async () => {
+  const harness = createHarness();
+  const calls = [];
+  const page = mountRenameDialog(harness, { sessionId: 's2', currentTitle: 'Beta' }, {
+    renameSession: (id, title) => { calls.push([id, title]); return { ok: true }; }
+  });
+
+  const input = harness.doc.querySelector('.pbx-renameInput');
+  input.props.onChange({ target: { value: '  Beta 2  ' } });
+  page.instance.render();
+  harness.doc.querySelectorAll('.pbx-renameBtn.primary')[0].props.onClick({});
+  await tick();
+  page.instance.render();
+
+  assert.deepEqual(calls, [['s2', 'Beta 2']], 'the trimmed title is submitted once');
+  assert.equal(page.injected.hooks.rename.getSnapshot().sessionId, null, 'the dialog closes after success');
+});
+
+test('the Enter key submits a rename and Escape cancels it', async () => {
+  const harness = createHarness();
+  const calls = [];
+  const page = mountRenameDialog(harness, { sessionId: 's2', currentTitle: 'Beta' }, {
+    renameSession: (id, title) => { calls.push([id, title]); return { ok: true }; }
+  });
+
+  let input = harness.doc.querySelector('.pbx-renameInput');
+  input.props.onChange({ target: { value: 'Entered' } });
+  page.instance.render();
+  input = harness.doc.querySelector('.pbx-renameInput');
+  input.props.onKeyDown({ key: 'Enter', preventDefault() {}, stopPropagation() {} });
+  await tick();
+  page.instance.render();
+  assert.deepEqual(calls, [['s2', 'Entered']], 'Enter submits the rename');
+
+  // A second dialog: Escape closes it without calling the host.
+  const page2 = mountRenameDialog(harness, { sessionId: 's3', currentTitle: 'Gamma' }, {
+    renameSession: () => { throw new Error('must not be called'); }
+  });
+  harness.doc.activeElement = harness.doc.body;
+  harness.doc.dispatchEvent(new KeyboardEventShim('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  page2.instance.render();
+  assert.equal(page2.injected.hooks.rename.getSnapshot().sessionId, null, 'Escape closes the dialog');
+});
+
+test('a failed rename keeps the dialog open and shows the reason', async () => {
+  const harness = createHarness();
+  const page = mountRenameDialog(harness, { sessionId: 's2', currentTitle: 'Beta' }, {
+    renameSession: () => ({ ok: false, error: { message: 'rename failed on host' } })
+  });
+
+  const input = harness.doc.querySelector('.pbx-renameInput');
+  input.props.onChange({ target: { value: 'Nope' } });
+  page.instance.render();
+  harness.doc.querySelectorAll('.pbx-renameBtn.primary')[0].props.onClick({});
+  await tick();
+  page.instance.render();
+
+  const error = harness.doc.querySelector('.pbx-renameError');
+  assert.ok(error, 'the failure is shown in the dialog');
+  assert.equal(error.children[0].textContent, 'rename failed on host');
+  assert.equal(page.injected.hooks.rename.getSnapshot().sessionId, 's2', 'the dialog stays open for another try');
+});
+
+test('archiving from the session menu closes it on success and reports failures', async () => {
+  const harness = createHarness();
+  const archived = [];
+  const menu = mountSessionMenu(harness, { sessionId: 's2', title: 'Beta' }, {
+    archiveSession: (id) => { archived.push(id); return { ok: true }; }
+  });
+  harness.doc.querySelectorAll('.pbx-menuOption')[0].props.onClick({});
+  await tick();
+  menu.instance.render();
+  assert.deepEqual(archived, ['s2'], 'the session is archived once');
+  assert.equal(menu.injected.hooks.sessionMenu.getSnapshot().sessionId, null, 'the menu closes after archiving');
+
+  const failing = mountSessionMenu(harness, { sessionId: 's3', title: 'Gamma' }, {
+    archiveSession: () => ({ ok: false, error: { message: 'session is still running' } })
+  });
+  harness.doc.querySelectorAll('.pbx-menuOption')[0].props.onClick({});
+  await tick();
+  failing.instance.render();
+  const error = harness.doc.querySelector('.pbx-renameError');
+  assert.ok(error, 'the archive failure is shown');
+  assert.ok(String(error.children[0].textContent).indexOf('session is still running') >= 0, 'the host reason is carried into the message');
+  assert.equal(failing.injected.hooks.sessionMenu.getSnapshot().sessionId, 's3', 'the menu stays open');
+});
+
+test('delete asks for confirmation once and then calls the host', async () => {
+  const harness = createHarness();
+  const deletions = [];
+  const menu = mountSessionMenu(harness, { sessionId: 's2', title: 'Beta' }, {
+    deleteSupported: true,
+    deleteSession: (id) => { deletions.push(id); return { ok: true }; }
+  });
+
+  harness.doc.querySelectorAll('.pbx-menuOption.danger')[0].props.onClick({});
+  await tick();
+  menu.instance.render();
+  assert.deepEqual(deletions, [], 'the first press only asks for confirmation');
+
+  harness.doc.querySelectorAll('.pbx-menuOption.danger')[0].props.onClick({});
+  await tick();
+  menu.instance.render();
+  assert.deepEqual(deletions, ['s2'], 'the second press deletes the session');
+  assert.equal(menu.injected.hooks.sessionMenu.getSnapshot().sessionId, null, 'the menu closes after deleting');
 });
