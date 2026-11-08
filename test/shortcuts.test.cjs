@@ -1128,14 +1128,15 @@ test('the floating list docks and comes back with the native sidebar on the same
 
   // The native frame publishes the layout's *target* state: an inline grid template whose first
   // track is the sidebar column, plus a collapsed attribute. Neither waits for the width animation.
-  const closed = 'grid-template-columns: 0px minmax(400px, 1fr) minmax(0px, 800px)';
-  const opened = 'grid-template-columns: 280px minmax(400px, 1fr) minmax(0px, 800px)';
+  /* element.style.gridTemplateColumns is the value only; the attribute keeps the declaration. */
+  const closed = '0px minmax(400px, 1fr) minmax(0px, 800px)';
+  const opened = '280px minmax(400px, 1fr) minmax(0px, 800px)';
   const frame = new VirtualNode('div', {
     className: 'AppFrame_frame',
     style: { gridTemplateColumns: closed },
     'data-sidebar-collapsed': 'true'
   }, [], harness.doc);
-  frame.attributes.style = closed;
+  frame.attributes.style = 'grid-template-columns: ' + closed;
   harness.doc.__addRoot(frame);
 
   const hud = harness.mountHud();
@@ -1144,7 +1145,7 @@ test('the floating list docks and comes back with the native sidebar on the same
 
   // Open the sidebar: the frame's target state changes immediately, before the column animates.
   frame.style.gridTemplateColumns = opened;
-  frame.attributes.style = opened;
+  frame.attributes.style = 'grid-template-columns: ' + opened;
   frame.removeAttribute('data-sidebar-collapsed');
   harness.runIntervals();
   hud.render();
@@ -1152,7 +1153,7 @@ test('the floating list docks and comes back with the native sidebar on the same
 
   // Close it again: the pill must come back without waiting for a width animation to finish.
   frame.style.gridTemplateColumns = closed;
-  frame.attributes.style = closed;
+  frame.attributes.style = 'grid-template-columns: ' + closed;
   frame.setAttribute('data-sidebar-collapsed', 'true');
   harness.runIntervals();
   hud.render();
@@ -1171,7 +1172,7 @@ test('a list that docked at startup comes back when the sidebar closes', () => {
   const opened = 'grid-template-columns: 280px minmax(400px, 1fr) minmax(0px, 800px)';
   const closed = 'grid-template-columns: 0px minmax(400px, 1fr) minmax(0px, 800px)';
   const frame = new VirtualNode('div', { className: 'AppFrame_frame', style: { gridTemplateColumns: opened } }, [], harness.doc);
-  frame.attributes.style = opened;
+  frame.attributes.style = 'grid-template-columns: ' + opened;
   harness.doc.__addRoot(frame);
 
   const hud = harness.mountHud();
@@ -1179,7 +1180,7 @@ test('a list that docked at startup comes back when the sidebar closes', () => {
   assert.equal(/collapsed/.test(hud.node.className), true, 'the list starts as a pill when the app opens with the sidebar expanded');
 
   frame.style.gridTemplateColumns = closed;
-  frame.attributes.style = closed;
+  frame.attributes.style = 'grid-template-columns: ' + closed;
   frame.setAttribute('data-sidebar-collapsed', 'true');
   harness.runIntervals();
   hud.render();
@@ -3043,4 +3044,68 @@ test('a stored position is honoured when the floating list mounts', () => {
   assert.ok(root, 'the floating list is rendered');
   assert.equal(root.style.left, '120px', 'the stored x is restored');
   assert.equal(root.style.top, '260px', 'the stored y is restored');
+});
+test('a moved floating list docks next to the sidebar and returns to its own spot', () => {
+  const harness = createHarness();
+  harness.resetState();
+  harness.clearSpies();
+  harness.window.localStorage.setItem('pbx.hud.pos', JSON.stringify({ x: 600, y: 500 }));
+  const settings = harness.settingsStore.getSnapshot();
+  harness.settingsStore.set({ hud: Object.assign({}, settings.hud, { defaultPosition: 'last' }) });
+
+  /* element.style.gridTemplateColumns is the value only; the attribute keeps the declaration. */
+  const closed = '0px minmax(400px, 1fr) minmax(0px, 800px)';
+  const opened = '280px minmax(400px, 1fr) minmax(0px, 800px)';
+  const frame = new VirtualNode('div', { className: 'AppFrame_frame', style: { gridTemplateColumns: closed }, 'data-sidebar-collapsed': 'true' }, [], harness.doc);
+  frame.attributes.style = 'grid-template-columns: ' + closed;
+  const column = new VirtualNode('div', { class: '_sidebarCol' }, [], harness.doc);
+  column.getBoundingClientRect = () => ({ width: 280, height: 800, top: 0, left: 0, right: 280, bottom: 800 });
+  frame.appendChild(column);
+  harness.doc.__addRoot(frame);
+
+  const hud = harness.mountHud('hud');
+  assert.ok(hud.node, 'the floating list rendered');
+  assert.equal(hud.node.style.left, '600px', 'the list starts at its stored spot');
+
+  // The native sidebar opens: the list docks beside it and collapses to the pill.
+  frame.style.gridTemplateColumns = opened;
+  frame.attributes.style = 'grid-template-columns: ' + opened;
+  frame.removeAttribute('data-sidebar-collapsed');
+  harness.runIntervals();
+  hud.render();
+  harness.runTimers(); // the 80 ms dock position and the 320 ms follow-up
+  hud.render();
+  assert.equal(/collapsed/.test(hud.node.className), true, 'the list collapses while docked');
+  assert.equal(hud.node.style.left, '288px', 'the pill hugs the sidebar column edge');
+
+  // Closing the sidebar returns the list to the user own position and expanded state.
+  frame.style.gridTemplateColumns = closed;
+  frame.attributes.style = 'grid-template-columns: ' + closed;
+  frame.setAttribute('data-sidebar-collapsed', 'true');
+  harness.runIntervals();
+  hud.render();
+  assert.equal(/collapsed/.test(hud.node.className), false, 'the list unfolds again');
+  assert.equal(hud.node.style.left, '600px', 'the list returns to the stored x');
+  assert.equal(hud.node.style.top, '500px', 'the list returns to the stored y');
+
+  harness.doc.__removeRoot(frame);
+});
+
+test('Alt+E on a disabled floating list re-enables it expanded', () => {
+  const harness = createHarness();
+  const before = harness.settingsStore.getSnapshot();
+  harness.settingsStore.set({ hud: Object.assign({}, before.hud, { enabled: false, defaultCollapsed: true }) });
+  const hud = harness.mountHud('hud');
+  assert.equal(hud.node, null, 'nothing is rendered while the list is disabled');
+
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyE');
+  harness.runTimers();
+  hud.render();
+
+  assert.equal(harness.settingsStore.getSnapshot().hud.enabled, true, 'the shortcut turns the list back on');
+  assert.ok(hud.node, 'the list is rendered again');
+  assert.equal(/collapsed/.test(hud.node.className), false, 'and it comes back expanded, not as a pill');
+  assert.equal(harness.window.localStorage.getItem('pbx.hud.collapsed'), '0', 'the expanded choice is persisted');
 });

@@ -88,6 +88,7 @@
 - 失误：想用浏览器客户端 `?token=` 连 `127.0.0.1` 验证，桌面端 token 是启动时临时签发 → 401 → 规则：不用 web 客户端代跑验证，走桌面端插件日志
 - 失误：日志级别停在默认档时，`Alt+W` 的 info 记录看不到 → 规则：排查前先把「日志与排查」级别调到「常规」，或直接读 localStorage 里的 `entries`
 - 失误：只写"修好了"而没有可复现的判断依据，下一轮又是猜 → 规则：每次行为修复配一条回归测试（`test/` 下两个测试文件的回归测试就是地基），并在 `docs/architecture.md` 留判定口径
+- 失误：构造宿主布局夹具时把 `grid-template-columns: 280px …` 整串塞进 `frame.style.gridTemplateColumns`，而插件的 `readExpanded()` 用 `parseFloat` 读它 → `NaN` → 悄悄退到"量列宽"分支，测试看着绿其实没走 grid 目标态；同样的问题让"侧栏关闭后 HUD 复位"一直测不出来 → 规则：夹具必须还原 DOM 语义——`element.style.<prop>` 只放**值**，整条声明放 `getAttribute('style')`，否则测的是回落路径而不是主路径
 
 ## 本机网络与工具
 
