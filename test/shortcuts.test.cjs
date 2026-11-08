@@ -769,7 +769,15 @@ function createHarness(options) {
     clearInterval: win.clearInterval,
     requestAnimationFrame: win.requestAnimationFrame,
     cancelAnimationFrame: win.cancelAnimationFrame,
-    CustomEvent: win.CustomEvent
+    CustomEvent: win.CustomEvent,
+    /* The bundle sends one synthetic wheel event before its first position write; a real DOM
+       has WheelEvent, so the sandbox must too or that branch silently never runs. */
+    WheelEvent: class WheelEvent {
+      constructor(type, init) {
+        this.type = type;
+        Object.assign(this, init || {});
+      }
+    }
   };
   sandbox.globalThis = sandbox;
 
@@ -3694,4 +3702,48 @@ test('a floating list at its default anchor only collapses when the sidebar open
   assert.ok(/default/.test(hud.node.className), 'and still reports the default anchor');
 
   harness.doc.__removeRoot(frame);
+});
+test('the floating list honours each default-position setting', () => {
+  const cases = [
+    { mode: 'top-right', bottom: false },
+    { mode: 'bottom-right', bottom: true },
+    // 'last' without a stored position falls back to the shipped top-right anchor.
+    { mode: 'last', bottom: false }
+  ];
+  for (const item of cases) {
+    const harness = createHarness();
+    const settings = harness.settingsStore.getSnapshot();
+    harness.settingsStore.set({ hud: Object.assign({}, settings.hud, { defaultPosition: item.mode }) });
+    const hud = harness.mountHud('hud');
+    assert.ok(hud.node, 'the list renders with defaultPosition=' + item.mode);
+    assert.equal(hud.node.style.left, undefined, item.mode + ' pins no left offset before any drag');
+    assert.ok(/default/.test(hud.node.className), item.mode + ' keeps the anchored layout');
+    assert.equal(/bottom/.test(hud.node.className), item.bottom, item.mode + ' maps to the expected CSS anchor');
+  }
+});
+test('a held scroll sends one wheel signal before it takes over', () => {
+  const harness = createHarness();
+  const chat = makeScrollableChat(harness, { scrollTop: 600 });
+  const events = [];
+  chat.scroller.dispatchEvent = (event) => {
+    events.push(event && event.type);
+    return true;
+  };
+
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyU');
+  harness.runTimers();
+  let clock = 0;
+  for (let i = 0; i < 6; i += 1) {
+    clock += 16;
+    harness.window.__setNow(clock);
+    harness.runFrame(clock);
+  }
+
+  assert.equal(events.filter((type) => type === 'wheel').length, 1, 'exactly one synthetic wheel signal is sent');
+  assert.ok(chat.scroller.scrollTop < 600, 'and the loop then moves the scroller itself');
+
+  harness.window.dispatchEvent(new KeyboardEventShim('keyup', { code: 'KeyU', altKey: true, bubbles: true }));
+  chat.restore();
 });
