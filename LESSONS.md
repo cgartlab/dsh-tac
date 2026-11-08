@@ -88,7 +88,7 @@
 
 ## 验证与调试
 
-- 失误：测试把共享夹具 `SESSION_FIXTURE.byId.s2` 存成**引用**再 `delete retainedBy`，"还原"时赋回的还是被改过的同一个对象 → 这个文件里**之后所有测试都在"没有当前会话"的状态下跑**，`Alt+R` / `Alt+D` 那几条"没有重复弹窗"的断言一直是空过的（本轮全量冒烟才发现） → 规则：共享夹具的保存必须**深拷贝**（`JSON.parse(JSON.stringify(x))`）或用 `try/finally` 重新构造；任何"修改共享状态"的测试都要考虑对后续测试的污染 → 证据：本轮修复，`test/shortcuts.test.cjs`
+- 失误：测试把共享夹具 `SESSION_FIXTURE.byId.s2` 存成**引用**再 `delete retainedBy`，"还原"时赋回的还是被改过的同一个对象 → 这个文件里**之后所有测试都在"没有当前会话"的状态下跑**，`Alt+R` / `Alt+D` 那几条"没有重复弹窗"的断言一直是空过的（本轮全量冒烟才发现） → 规则：共享夹具的保存必须**深拷贝**（`JSON.parse(JSON.stringify(x))`）或用 `try/finally` 重新构造；更彻底的做法是让 harness 自己持有夹具副本（`createHarness` 深拷贝 + `patchSessions(mutate)` 每次从常量重建），测试**不允许**直接改模块级夹具 → 证据：`test/shortcuts.test.cjs`
 - 失误：虚拟滚动容器把 `scrollTop` 当普通字段，而插件用 `node.scrollTop = node.scrollHeight` 这个"到底"哨兵依赖浏览器**自动 clamp**，测试里就成了 `2000`（越界值），看起来像 bug → 规则：夹具里给 `scrollTop` 写 setter 并按 `scrollHeight - clientHeight` 限制，和真实元素一致 → 证据：本轮矩阵测试
 
 - 失误：想用 SendKeys / AppActivate / PostMessage 往 DSH 窗口注入快捷键来验证，Windows 前台锁 + 无地址化的 Chromium 子窗口，全部失败 → 规则：快捷键只能由人按，Agent 只读插件日志验证；日志必须有 scope 粒度（`shortcut` / `sidebar` / `hud`）

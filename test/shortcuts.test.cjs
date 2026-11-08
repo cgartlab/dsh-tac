@@ -807,10 +807,13 @@ function createHarness(options) {
 
   /* Mutable so a test can give the palette real projects to filter by. */
   let wsFixture = { items: [], archivedSessionIds: [] };
+  /* A private copy of the shared session fixture: mutating the module-level object used to
+     leak "no current session" into every later test in this file. */
+  let sessionFixture = JSON.parse(JSON.stringify(SESSION_FIXTURE));
 
   const props = Object.assign({}, injected, {
     t: ctx.locale.bind('projectBoard'),
-    useSessions: (selector) => selector(SESSION_FIXTURE),
+    useSessions: (selector) => selector(sessionFixture),
     useSessionStatus: (selector) => selector(new Map()),
     useWorkspaces: (selector) => selector(wsFixture),
     usePalette: (selector) => selector(paletteStore.getSnapshot()),
@@ -898,6 +901,17 @@ function createHarness(options) {
     render,
     setWorkspaces(next) {
       wsFixture = next;
+    },
+    /** Mutate a private copy of the session fixture, then re-render. */
+    patchSessions(mutate) {
+      sessionFixture = JSON.parse(JSON.stringify(SESSION_FIXTURE));
+      mutate(sessionFixture);
+      render();
+      return sessionFixture;
+    },
+    /** The fixture this harness is using (lets other mounts read the same data). */
+    sessions() {
+      return sessionFixture;
     },
     mountHud(rootKey) {
       const entry = registrations.find((item) => item.spec.id === 'project-board-hud');
@@ -1978,25 +1992,19 @@ test('Alt+N from a fullscreen board leaves fullscreen and lands on the narrow wi
 
 test('the session cycle handles a single session', () => {
   const harness = createHarness();
-  const savedIds = SESSION_FIXTURE.ids;
-  const savedById = SESSION_FIXTURE.byId;
-  try {
-    SESSION_FIXTURE.ids = ['s2'];
-    SESSION_FIXTURE.byId = { s2: savedById.s2 };
-    harness.resetState();
-    harness.clearSpies();
-    harness.render();
+  harness.patchSessions((fixture) => {
+    fixture.ids = ['s2'];
+    fixture.byId = { s2: fixture.byId.s2 };
+  });
+  harness.resetState();
+  harness.clearSpies();
 
-    harness.pressCombo('alt+Comma');
-    assert.deepEqual(harness.services.calls.openSession, ['s2'], 'next opens the only session');
+  harness.pressCombo('alt+Comma');
+  assert.deepEqual(harness.services.calls.openSession, ['s2'], 'next opens the only session');
 
-    harness.clearSpies();
-    harness.pressCombo('alt+KeyI');
-    assert.deepEqual(harness.services.calls.openSession, ['s2'], 'previous opens the only session');
-  } finally {
-    SESSION_FIXTURE.ids = savedIds;
-    SESSION_FIXTURE.byId = savedById;
-  }
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyI');
+  assert.deepEqual(harness.services.calls.openSession, ['s2'], 'previous opens the only session');
 });
 
 test('the session cycle follows the floating list order', () => {
@@ -2020,25 +2028,18 @@ test('the session cycle follows the floating list order', () => {
 
 test('the session cycle starts from an end when the current session is not listed', () => {
   const harness = createHarness();
-  /* Deep copy: the fixture is shared across tests, and a reference would be mutated by the
-     delete below, leaking "no current session" into every later test in this file. */
-  const saved = JSON.parse(JSON.stringify(SESSION_FIXTURE.byId.s2));
-  try {
-    delete SESSION_FIXTURE.byId.s2.retainedBy;
-    harness.resetState();
-    harness.clearSpies();
-    harness.render();
+  harness.patchSessions((fixture) => {
+    delete fixture.byId.s2.retainedBy;
+  });
+  harness.resetState();
+  harness.clearSpies();
 
-    harness.pressCombo('alt+KeyI');
-    assert.deepEqual(harness.services.calls.openSession, ['s3'], 'previous wraps to the last row when there is no current session');
+  harness.pressCombo('alt+KeyI');
+  assert.deepEqual(harness.services.calls.openSession, ['s3'], 'previous wraps to the last row when there is no current session');
 
-    harness.clearSpies();
-    harness.pressCombo('alt+Comma');
-    assert.deepEqual(harness.services.calls.openSession, ['s1'], 'next starts at the first row when there is no current session');
-  } finally {
-    SESSION_FIXTURE.byId.s2 = saved;
-    harness.render();
-  }
+  harness.clearSpies();
+  harness.pressCombo('alt+Comma');
+  assert.deepEqual(harness.services.calls.openSession, ['s1'], 'next starts at the first row when there is no current session');
 });
 /* ------------------------------------------------------- view persistence + HUD */
 
@@ -2047,7 +2048,7 @@ function mountBoardPanel(harness) {
   assert.ok(entry, 'the main board panel is registered');
   const injected = entry.spec.inject();
   const props = Object.assign({}, injected, {
-    useSessions: (selector) => selector(SESSION_FIXTURE),
+    useSessions: (selector) => selector(harness.sessions()),
     useSessionStatus: (selector) => selector(new Map()),
     useWorkspaces: (selector) =>
       selector({ items: [{ workspaceId: 'w1', title: 'Workspace', sessionIds: ['s1', 's2', 's3'] }], archivedSessionIds: [] }),
@@ -2564,24 +2565,19 @@ test('a host without the layout service falls back to the left sidebar service',
 
 test('rename and session-menu stay silent when no session is current', () => {
   const harness = createHarness();
-  const saved = SESSION_FIXTURE.byId.s2.retainedBy;
-  try {
-    delete SESSION_FIXTURE.byId.s2.retainedBy;
-    harness.resetState();
-    harness.clearSpies();
-    harness.render();
+  harness.patchSessions((fixture) => {
+    delete fixture.byId.s2.retainedBy;
+  });
+  harness.resetState();
+  harness.clearSpies();
 
-    const renameEvent = harness.pressCombo('alt+KeyR');
-    assert.deepEqual(harness.spies.requestRename, [], 'no rename request without a current session');
-    assert.equal(renameEvent.defaultPrevented, false, 'the rename key is left to the page');
+  const renameEvent = harness.pressCombo('alt+KeyR');
+  assert.deepEqual(harness.spies.requestRename, [], 'no rename request without a current session');
+  assert.equal(renameEvent.defaultPrevented, false, 'the rename key is left to the page');
 
-    const menuEvent = harness.pressCombo('alt+KeyD');
-    assert.deepEqual(harness.spies.requestSessionMenu, [], 'no session-menu request without a current session');
-    assert.equal(menuEvent.defaultPrevented, false, 'the session-menu key is left to the page');
-  } finally {
-    SESSION_FIXTURE.byId.s2.retainedBy = saved;
-    harness.render();
-  }
+  const menuEvent = harness.pressCombo('alt+KeyD');
+  assert.deepEqual(harness.spies.requestSessionMenu, [], 'no session-menu request without a current session');
+  assert.equal(menuEvent.defaultPrevented, false, 'the session-menu key is left to the page');
 });
 
 test('the built-in conflict check skips catalog rows that already report conflicts', () => {
