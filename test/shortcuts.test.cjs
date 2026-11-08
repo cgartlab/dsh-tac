@@ -801,11 +801,14 @@ function createHarness(options) {
     notify: []
   };
 
+  /* Mutable so a test can give the palette real projects to filter by. */
+  let wsFixture = { items: [], archivedSessionIds: [] };
+
   const props = Object.assign({}, injected, {
     t: ctx.locale.bind('projectBoard'),
     useSessions: (selector) => selector(SESSION_FIXTURE),
     useSessionStatus: (selector) => selector(new Map()),
-    useWorkspaces: (selector) => selector({ items: [], archivedSessionIds: [] }),
+    useWorkspaces: (selector) => selector(wsFixture),
     usePalette: (selector) => selector(paletteStore.getSnapshot()),
     useSettings: (selector) => selector(settingsStore.getSnapshot()),
     useHudOrder: (selector) => selector(hudOrderStore.getSnapshot()),
@@ -889,6 +892,9 @@ function createHarness(options) {
     spies,
     instance,
     render,
+    setWorkspaces(next) {
+      wsFixture = next;
+    },
     mountHud(rootKey) {
       const entry = registrations.find((item) => item.spec.id === 'project-board-hud');
       assert.ok(entry, 'the floating session list overlay is registered');
@@ -3219,4 +3225,70 @@ test('invalid stored shortcut values fall back to their defaults', () => {
   assert.equal(restored.defaultPrevented, true, 'the restored default combo works again');
   const unknown = fresh.pressCombo('alt+KeyQ');
   assert.equal(unknown.defaultPrevented, false, 'a combo stored under an unknown action stays inert');
+});
+test('Escape in the palette drops the project filter before it closes the panel', () => {
+  const harness = createHarness();
+  harness.setWorkspaces({
+    items: [{ workspaceId: 'w1', title: 'Workspace', sessionIds: ['s1', 's2', 's3'] }],
+    archivedSessionIds: []
+  });
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyK');
+  assert.equal(harness.paletteOpen(), true, 'the palette is open');
+
+  const chips = harness.doc.querySelectorAll('.pbx-pchip');
+  assert.equal(chips.length, 2, 'the palette offers an all-projects chip and one project chip');
+  chips[1].props.onClick({});
+  harness.render();
+  const active = harness.doc.querySelectorAll('.pbx-pchip.on');
+  assert.equal(active.length, 1, 'one chip owns the filter');
+  assert.notEqual(active[0], harness.doc.querySelectorAll('.pbx-pchip')[0], 'the project chip is the active one');
+
+  function escape() {
+    const input = harness.doc.querySelector('.pbx-paletteInput');
+    input.props.onKeyDown({ key: 'Escape', preventDefault() {}, stopPropagation() {}, currentTarget: input });
+    harness.render();
+  }
+  escape();
+  assert.equal(harness.paletteOpen(), true, 'the first Escape only clears the filter');
+  const chipsAfter = harness.doc.querySelectorAll('.pbx-pchip');
+  const cleared = harness.doc.querySelectorAll('.pbx-pchip.on');
+  assert.equal(cleared.length, 1, 'exactly one chip is active after clearing');
+  assert.equal(cleared[0], chipsAfter[0], 'the all-projects chip is active again');
+
+  escape();
+  assert.equal(harness.paletteOpen(), false, 'the second Escape closes the palette');
+});
+test('Alt+Enter with a disabled steer reports instead of pretending to send', () => {
+  const harness = createHarness();
+  const dock = new VirtualNode('div', { 'data-queue-dock': '' }, [], harness.doc);
+  const row = new VirtualNode('li', {}, [], harness.doc);
+  const steer = new VirtualNode('button', { 'aria-label': '插话发送' }, [], harness.doc);
+  steer.disabled = true;
+  let clicks = 0;
+  steer.click = () => { clicks += 1; };
+  row.appendChild(steer);
+  dock.appendChild(row);
+  harness.doc.__addRoot(dock);
+
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+Enter');
+
+  assert.equal(clicks, 0, 'a disabled steer button is never clicked');
+  assert.equal(harness.spies.notify.length, 1, 'the user is told there is nothing to send');
+  assert.equal(harness.spies.notify[0].tone, 'warn', 'the notice is a warning');
+
+  harness.doc.__removeRoot(dock);
+});
+
+test('Alt+S is harmless without a conversation on screen', () => {
+  const harness = createHarness();
+  harness.resetState();
+  harness.clearSpies();
+  let event = null;
+  assert.doesNotThrow(() => { event = harness.pressCombo('alt+KeyS'); }, 'Alt+S must not throw without a chat');
+  assert.equal(event.defaultPrevented, true, 'the combo is still consumed');
+  assert.equal(harness.doc.activeElement, harness.doc.body, 'and no stray focus change happens');
 });
