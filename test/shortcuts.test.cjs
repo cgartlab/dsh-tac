@@ -758,8 +758,30 @@ function createHarness(options) {
   }
   const silentConsole = { log() {}, warn() {}, error() {}, info() {}, debug() {} };
 
+  /* MutationObserver is how the dock reacts on the same frame as the host's attribute change;
+     without it in the sandbox that fast path never runs and only the 800 ms interval remains. */
+  const mutationObservers = [];
+  class MutationObserverStub {
+    constructor(callback) {
+      this.callback = callback;
+      this.active = true;
+      this.targets = [];
+      mutationObservers.push(this);
+    }
+    observe(target, options) {
+      this.targets.push({ target, options });
+    }
+    disconnect() {
+      this.active = false;
+    }
+    takeRecords() {
+      return [];
+    }
+  }
+
   const sandbox = {
     window: win,
+    MutationObserver: MutationObserverStub,
     document: doc,
     localStorage,
     console: silentConsole,
@@ -937,6 +959,12 @@ function createHarness(options) {
       for (const timer of win.__timers.slice()) if (!timer.cleared) timer.fn();
     },
     /** Run the animation frames queued so far; each callback may schedule the next one. */
+    /** Fire the live MutationObserver callbacks, as a real DOM attribute change would. */
+    flushMutations() {
+      for (const observer of mutationObservers.slice()) {
+        if (observer.active) observer.callback([], observer);
+      }
+    },
     runFrame(timestamp) {
       const queued = win.__frames.splice(0);
       for (const frame of queued) frame.fn(timestamp);
@@ -3746,4 +3774,71 @@ test('a held scroll sends one wheel signal before it takes over', () => {
 
   harness.window.dispatchEvent(new KeyboardEventShim('keyup', { code: 'KeyU', altKey: true, bubbles: true }));
   chat.restore();
+});
+test('the floating list reacts on the same frame as a sidebar attribute change', () => {
+  const harness = createHarness();
+  const closed = '0px minmax(400px, 1fr) minmax(0px, 800px)';
+  const opened = '280px minmax(400px, 1fr) minmax(0px, 800px)';
+  const frame = new VirtualNode('div', { className: 'AppFrame_frame', style: { gridTemplateColumns: closed }, 'data-sidebar-collapsed': 'true' }, [], harness.doc);
+  frame.attributes.style = 'grid-template-columns: ' + closed;
+  const column = new VirtualNode('div', { class: '_sidebarCol' }, [], harness.doc);
+  column.getBoundingClientRect = () => ({ width: 280, height: 800, top: 0, left: 0, right: 280, bottom: 800 });
+  frame.appendChild(column);
+  harness.doc.__addRoot(frame);
+
+  const hud = harness.mountHud('hud');
+  assert.equal(/collapsed/.test(hud.node.className), false, 'the list starts unfolded');
+
+  frame.style.gridTemplateColumns = opened;
+  frame.attributes.style = 'grid-template-columns: ' + opened;
+  frame.removeAttribute('data-sidebar-collapsed');
+
+  // The 800 ms interval has not run: only the observer can have seen this.
+  harness.flushMutations();
+  harness.runFrame(16);
+  hud.render();
+  assert.equal(/collapsed/.test(hud.node.className), true, 'the observer-driven tick docked the list without waiting for the interval');
+
+  harness.doc.__removeRoot(frame);
+});
+test('closing the sidebar with Alt+W restores a docked pill', () => {
+  const harness = createHarness();
+  harness.window.localStorage.setItem('pbx.hud.pos', JSON.stringify({ x: 600, y: 500 }));
+  const settings = harness.settingsStore.getSnapshot();
+  harness.settingsStore.set({ hud: Object.assign({}, settings.hud, { defaultPosition: 'last' }) });
+  const closed = '0px minmax(400px, 1fr) minmax(0px, 800px)';
+  const opened = '280px minmax(400px, 1fr) minmax(0px, 800px)';
+  const frame = new VirtualNode('div', { className: 'AppFrame_frame', style: { gridTemplateColumns: closed }, 'data-sidebar-collapsed': 'true' }, [], harness.doc);
+  frame.attributes.style = 'grid-template-columns: ' + closed;
+  const column = new VirtualNode('div', { class: '_sidebarCol' }, [], harness.doc);
+  column.getBoundingClientRect = () => ({ width: 280, height: 800, top: 0, left: 0, right: 280, bottom: 800 });
+  frame.appendChild(column);
+  harness.doc.__addRoot(frame);
+
+  const hud = harness.mountHud('hud');
+  const setSidebar = (expanded) => {
+    const template = expanded ? opened : closed;
+    frame.style.gridTemplateColumns = template;
+    frame.attributes.style = 'grid-template-columns: ' + template;
+    if (expanded) frame.removeAttribute('data-sidebar-collapsed');
+    else frame.setAttribute('data-sidebar-collapsed', 'true');
+  };
+
+  setSidebar(true);
+  harness.runIntervals();
+  hud.render();
+  harness.runTimers();
+  hud.render();
+  assert.equal(/collapsed/.test(hud.node.className), true, 'the pill is docked while the sidebar is open');
+  assert.equal(hud.node.style.left, '288px', 'beside the sidebar column');
+
+  // Alt+W closes the sidebar; the host flips the frame and the dock must restore the list.
+  harness.services.layout.toggleSidebar = () => setSidebar(false);
+  harness.pressCombo('alt+KeyW');
+  harness.runIntervals();
+  hud.render();
+  assert.equal(/collapsed/.test(hud.node.className), false, 'the list comes back when Alt+W closes the sidebar');
+  assert.equal(hud.node.style.left, '600px', 'at the user own spot');
+
+  harness.doc.__removeRoot(frame);
 });
