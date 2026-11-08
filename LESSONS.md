@@ -93,6 +93,7 @@
 - 失误：测试把共享夹具 `SESSION_FIXTURE.byId.s2` 存成**引用**再 `delete retainedBy`，"还原"时赋回的还是被改过的同一个对象 → 这个文件里**之后所有测试都在"没有当前会话"的状态下跑**，`Alt+R` / `Alt+D` 那几条"没有重复弹窗"的断言一直是空过的（本轮全量冒烟才发现） → 规则：共享夹具的保存必须**深拷贝**（`JSON.parse(JSON.stringify(x))`）或用 `try/finally` 重新构造；更彻底的做法是让 harness 自己持有夹具副本（`createHarness` 深拷贝 + `patchSessions(mutate)` 每次从常量重建），测试**不允许**直接改模块级夹具 → 证据：`test/shortcuts.test.cjs`
 - 失误：虚拟滚动容器把 `scrollTop` 当普通字段，而插件用 `node.scrollTop = node.scrollHeight` 这个"到底"哨兵依赖浏览器**自动 clamp**，测试里就成了 `2000`（越界值），看起来像 bug → 规则：夹具里给 `scrollTop` 写 setter 并按 `scrollHeight - clientHeight` 限制，和真实元素一致 → 证据：本轮矩阵测试
 - 失误：多条快捷键在"匹配到了但目标不存在"时完全静默（没有对话时 `Alt+U`/`Alt+S`、没有指令时跳转、没有当前会话时 `Alt+R`），真机上用户只会看到"按键没反应"，日志也帮不上忙 → 规则：凡"匹配后无事可做"的分支都留一条 debug 日志（`hold:no-chat` / `scrollBottom:no-chat` / `userJump:no-target` / `rename:blocked` 等），让每一次按键都能在日志里找到归属 → 证据：`test/shortcuts.test.cjs` 的 no-target 测试
+- 失误：沙箱里没有 `WheelEvent` 构造器，而插件在 `try/catch` 里 `new WheelEvent(...)` 发送"解除滚动锚点"信号——于是这条特性在测试中**从未执行过**，测试一直绿只是因为它被 catch 吞掉了 → 规则：`vm` 沙箱要提供浏览器里真实存在的全局构造器（`WheelEvent` 等），并给这类"workaround 分支"补一条可观测断言；同理，"测试绿"不等于"这行代码跑过" → 证据：本轮补的 wheel 信号测试
 
 - 失误：想用 SendKeys / AppActivate / PostMessage 往 DSH 窗口注入快捷键来验证，Windows 前台锁 + 无地址化的 Chromium 子窗口，全部失败 → 规则：快捷键只能由人按，Agent 只读插件日志验证；日志必须有 scope 粒度（`shortcut` / `sidebar` / `hud`）
 - 失误：想用浏览器客户端 `?token=` 连 `127.0.0.1` 验证，桌面端 token 是启动时临时签发 → 401 → 规则：不用 web 客户端代跑验证，走桌面端插件日志
