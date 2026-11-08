@@ -2387,3 +2387,97 @@ test('Alt+W from a fullscreen board exits fullscreen and toggles the sidebar', (
   assert.deepEqual(harness.services.calls.layoutToggleSidebar, [true], 'the sidebar toggles exactly once');
   assert.equal(state.expanded, true, 'the board pane itself stays open');
 });
+test('the palette navigates with the arrow keys and opens with Enter', () => {
+  const harness = createHarness();
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyK');
+  assert.equal(harness.paletteOpen(), true, 'the palette is open');
+
+  function input() {
+    const node = harness.doc.querySelector('.pbx-paletteInput');
+    assert.ok(node, 'the palette input is rendered');
+    return node;
+  }
+  function key(name) {
+    input().props.onKeyDown({ key: name, preventDefault() {}, stopPropagation() {}, currentTarget: input() });
+    harness.render();
+  }
+
+  // The list is ordered by activity: s1, s2, s3. One ArrowDown selects s2.
+  key('ArrowDown');
+  key('Enter');
+  assert.deepEqual(harness.services.calls.openSession, ['s2'], 'Enter opens the highlighted row');
+  assert.equal(harness.paletteOpen(), false, 'choosing a row closes the palette');
+
+  // ArrowUp at the top row stays there instead of wrapping out of bounds.
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyK');
+  key('ArrowUp');
+  key('Enter');
+  assert.deepEqual(harness.services.calls.openSession, ['s1'], 'ArrowUp at the first row keeps the first row selected');
+});
+
+test('Alt+S without a scroller scrolls the flow and honours reduced motion', () => {
+  const harness = createHarness();
+  const flow = new VirtualNode('div', { 'data-slot': 'conversation.chat.flow' }, [], harness.doc);
+  flow.getBoundingClientRect = () => ({ width: 800, height: 600, top: 0, left: 0, right: 800, bottom: 600 });
+  const calls = [];
+  flow.scrollIntoView = (options) => { calls.push(options); };
+  harness.doc.__addRoot(flow);
+
+  const composer = harness.makeEditable();
+  composer.getBoundingClientRect = () => ({ width: 320, height: 96, top: 600, left: 0, right: 320, bottom: 696 });
+  harness.doc.__addRoot(composer);
+  harness.doc.activeElement = harness.doc.body;
+
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyS');
+  assert.equal(calls.length, 1, 'the conversation flow is scrolled into view');
+  assert.equal(calls[0].behavior, 'smooth', 'the default scroll is smooth');
+  assert.equal(harness.doc.activeElement, composer, 'the composer still receives focus');
+
+  // With reduced motion requested the fallback jumps instead of animating.
+  const previousMatchMedia = harness.window.matchMedia;
+  harness.window.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventListener() {} });
+  calls.length = 0;
+  harness.doc.activeElement = harness.doc.body;
+  harness.pressCombo('alt+KeyS');
+  assert.equal(calls.length, 1, 'the flow is scrolled again');
+  assert.equal(calls[0].behavior, 'auto', 'reduced motion uses an instant jump');
+  harness.window.matchMedia = previousMatchMedia;
+
+  harness.doc.__removeRoot(flow);
+});
+test('the palette traps Tab focus and closes on Escape', () => {
+  const harness = createHarness();
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyK');
+
+  const originalGetClientRects = VirtualNode.prototype.getClientRects;
+  VirtualNode.prototype.getClientRects = function getClientRects() { return [{}]; };
+  try {
+    const panel = harness.doc.querySelector('.pbx-palette');
+    assert.ok(panel, 'the palette panel is rendered');
+    const focusables = panel.querySelectorAll('button, input');
+    assert.ok(focusables.length >= 2, 'the panel renders focusable controls');
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+
+    let prevented = 0;
+    harness.doc.activeElement = last;
+    panel.props.onKeyDown({ key: 'Tab', shiftKey: false, currentTarget: panel, preventDefault() { prevented += 1; }, stopPropagation() {} });
+    assert.equal(prevented, 1, 'Tab on the last control is trapped');
+    assert.equal(harness.doc.activeElement, first, 'focus wraps to the first control');
+  } finally {
+    VirtualNode.prototype.getClientRects = originalGetClientRects;
+  }
+
+  const input = harness.doc.querySelector('.pbx-paletteInput');
+  input.props.onKeyDown({ key: 'Escape', preventDefault() {}, stopPropagation() {}, currentTarget: input });
+  harness.render();
+  assert.equal(harness.paletteOpen(), false, 'Escape closes the palette');
+});
