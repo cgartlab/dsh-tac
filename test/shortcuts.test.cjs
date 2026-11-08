@@ -23,7 +23,19 @@
  *   - a KeyboardEvent-shaped event object dispatched through the plugin's real
  *     document listener (Node has no DOM, so the shim only provides DOM fields).
  *
- * Everything is deterministic: timers are recorded but never fire, no network,
+ * The harness has grown the pieces the harder paths need, all still deterministic:
+ *
+ *   - `window.dispatchEvent` delivers to the listeners the plugin installed on the
+ *     window (hold-scroll release keys, `pbx-hud-toggle`), not just records the event;
+ *   - `runFrame(timestamp)` drains the queued `requestAnimationFrame` callbacks so the
+ *     hold-scroll loop can be stepped, and `__setNow(ms)` moves the clock the loop reads
+ *     for its history-prefetch deadline;
+ *   - `connectBoardPane()` mirrors the host right pane (tab, expansion, width, fullscreen)
+ *     so the three-state board logic is exercised against the same markup the plugin reads;
+ *   - `createHarness({ services })` drops or replaces services before `apply()` captures
+ *     them, which is how a host build without `sidebarRight` or `layout` is tested.
+ *
+ * Everything is deterministic: timers are recorded but never fire on their own, no network,
  * no real storage, and every test gets a fresh sandbox around client.js.
  */
 
@@ -717,11 +729,16 @@ function comboInit(combo) {
   };
 }
 
-function createHarness() {
+function createHarness(options) {
   const doc = createVirtualDocument();
   const localStorage = createLocalStorage();
   const win = createWindowStub(doc, localStorage);
   const services = createServices();
+  /* A host build may expose fewer services; overrides are applied before apply() captures them. */
+  for (const [name, value] of Object.entries((options && options.services) || {})) {
+    if (value === undefined) delete services[name];
+    else services[name] = value;
+  }
   const silentConsole = { log() {}, warn() {}, error() {}, info() {}, debug() {} };
 
   const sandbox = {
@@ -2480,4 +2497,88 @@ test('the palette traps Tab focus and closes on Escape', () => {
   input.props.onKeyDown({ key: 'Escape', preventDefault() {}, stopPropagation() {}, currentTarget: input });
   harness.render();
   assert.equal(harness.paletteOpen(), false, 'Escape closes the palette');
+});
+/* ---------------------------------------------------- degraded host services */
+
+test('a host without the sidebar-right service degrades instead of throwing', () => {
+  const harness = createHarness({ services: { sidebarRight: undefined } });
+  harness.resetState();
+  harness.clearSpies();
+
+  for (const combo of ['alt+KeyN', 'alt+KeyB', 'alt+KeyV']) {
+    let event = null;
+    assert.doesNotThrow(() => { event = harness.pressCombo(combo); }, combo + ' must not throw without the right-pane service');
+    assert.equal(event.defaultPrevented, true, combo + ' is still consumed');
+    assert.deepEqual(harness.spies.toggleBoard.slice(-1), [combo === 'alt+KeyN' ? 'narrow' : combo === 'alt+KeyB' ? 'half' : 'full'], combo + ' still asks for its mode');
+  }
+
+  // The left sidebar uses a different service and keeps working.
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyW');
+  assert.deepEqual(harness.services.calls.layoutToggleSidebar, [true], 'Alt+W is unaffected by the missing right pane');
+});
+
+test('a host without the layout service falls back to the left sidebar service', () => {
+  const harness = createHarness({ services: { layout: undefined } });
+  harness.services.sidebarLeft = {
+    toggleExpanded() {
+      harness.services.calls.layoutToggleSidebar.push(true);
+    }
+  };
+  harness.resetState();
+  harness.clearSpies();
+
+  assert.doesNotThrow(() => harness.pressCombo('alt+KeyW'), 'Alt+W must not throw without the layout service');
+  assert.deepEqual(harness.services.calls.layoutToggleSidebar, [true], 'the fallback service performs the toggle');
+
+  assert.doesNotThrow(() => harness.pressCombo('alt+KeyN'), 'Alt+N must not throw without the layout service');
+});
+
+test('rename and session-menu stay silent when no session is current', () => {
+  const harness = createHarness();
+  const saved = SESSION_FIXTURE.byId.s2.retainedBy;
+  try {
+    delete SESSION_FIXTURE.byId.s2.retainedBy;
+    harness.resetState();
+    harness.clearSpies();
+    harness.render();
+
+    const renameEvent = harness.pressCombo('alt+KeyR');
+    assert.deepEqual(harness.spies.requestRename, [], 'no rename request without a current session');
+    assert.equal(renameEvent.defaultPrevented, false, 'the rename key is left to the page');
+
+    const menuEvent = harness.pressCombo('alt+KeyD');
+    assert.deepEqual(harness.spies.requestSessionMenu, [], 'no session-menu request without a current session');
+    assert.equal(menuEvent.defaultPrevented, false, 'the session-menu key is left to the page');
+  } finally {
+    SESSION_FIXTURE.byId.s2.retainedBy = saved;
+    harness.render();
+  }
+});
+
+test('the built-in conflict check skips catalog rows that already report conflicts', () => {
+  const harness = createHarness();
+  harness.services.shortcuts = {
+    catalog: {
+      getSnapshot: () => [
+        { id: 'conflicted', label: 'Conflicted Command', binding: { code: 'KeyZ', modifiers: ['alt'] }, conflicts: ['another binding'] },
+        { id: 'clean', label: 'Clean Command', binding: { code: 'KeyP', modifiers: ['alt'] } }
+      ]
+    }
+  };
+  const page = mountSettingsPage(harness);
+
+  // A row that already reports conflicts is not a reliable owner of the combo, so it must not
+  // block recording. ("previous session" is keycap index 1.)
+  clickKeycap(harness, page, 1);
+  harness.pressRaw({ key: 'z', code: 'KeyZ', altKey: true, bubbles: true });
+  page.instance.render();
+  assert.equal(harness.settingsStore.getSnapshot().shortcuts.prev, 'alt+KeyZ', 'a conflicted catalog row does not block the combo');
+
+  // A clean row still owns its combo and rejects the recording.
+  clickKeycap(harness, page, 2);
+  harness.pressRaw({ key: 'p', code: 'KeyP', altKey: true, bubbles: true });
+  page.instance.render();
+  assert.equal(harness.settingsStore.getSnapshot().shortcuts.next, 'alt+Comma', 'a clean catalog row still rejects the combo');
+  assert.equal(harness.doc.querySelectorAll('.pbx-setError').length, 1, 'the rejection is reported inline');
 });
