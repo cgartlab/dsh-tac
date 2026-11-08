@@ -131,6 +131,7 @@ class VirtualNode {
     this.scrollTop = 0;
     this.scrollHeight = 0;
     this.clientHeight = 0;
+    this.clientWidth = 120;
     /* The plugin reads these for drag/clamp maths; a layoutless node still has a box. */
     this.offsetWidth = 120;
     this.offsetHeight = 40;
@@ -336,8 +337,12 @@ function convertTree(element, doc) {
   }
   if (typeof element !== 'object') return null;
   if (typeof element.type !== 'string') {
-    // Fragment or a nested component (e.g. Icon): opaque to the shortcut checks.
-    return new VirtualNode('component', {}, [], doc);
+    // Fragment or a nested component (e.g. Icon): opaque markup, but keep the props so a test
+    // can still assert what was asked of it (the board's compact flag, a dialog's request).
+    const placeholder = new VirtualNode('component', {}, [], doc);
+    placeholder.componentType = element.type;
+    placeholder.componentProps = element.props || {};
+    return placeholder;
   }
   const node = new VirtualNode(element.type, element.props || {}, [], doc);
   if (element.props && element.props.ref && typeof element.props.ref === 'object') {
@@ -779,9 +784,23 @@ function createHarness(options) {
     }
   }
 
+  const resizeObservers = [];
+  class ResizeObserverStub {
+    constructor(callback) {
+      this.callback = callback;
+      this.active = true;
+      resizeObservers.push(this);
+    }
+    observe() {}
+    disconnect() {
+      this.active = false;
+    }
+  }
+
   const sandbox = {
     window: win,
     MutationObserver: MutationObserverStub,
+    ResizeObserver: ResizeObserverStub,
     document: doc,
     localStorage,
     console: silentConsole,
@@ -959,6 +978,16 @@ function createHarness(options) {
       for (const timer of win.__timers.slice()) if (!timer.cleared) timer.fn();
     },
     /** Run the animation frames queued so far; each callback may schedule the next one. */
+    /** How many ResizeObservers were created (diagnostics for width-driven UI). */
+    __resizeCount() {
+      return resizeObservers.length;
+    },
+    /** Fire the live ResizeObserver callbacks, as a real element resize would. */
+    flushResize() {
+      for (const observer of resizeObservers.slice()) {
+        if (observer.active) observer.callback([], observer);
+      }
+    },
     /** Fire the live MutationObserver callbacks, as a real DOM attribute change would. */
     flushMutations() {
       for (const observer of mutationObservers.slice()) {
@@ -3841,4 +3870,43 @@ test('closing the sidebar with Alt+W restores a docked pill', () => {
   assert.equal(hud.node.style.left, '600px', 'at the user own spot');
 
   harness.doc.__removeRoot(frame);
+});
+test('the right-pane board switches between compact and wide with its width', () => {
+  const harness = createHarness();
+  const entry = harness.registrations.find((item) => item.spec.id === '@local/dsh-tac/tab' || item.spec.key === '@local/dsh-tac/tab');
+  assert.ok(entry, 'the right-pane board tab is registered');
+  const injected = entry.spec.inject();
+  const props = Object.assign({}, injected, {
+    useSessions: (selector) => selector(harness.sessions()),
+    useSessionStatus: (selector) => selector(new Map()),
+    useWorkspaces: (selector) =>
+      selector({ items: [{ workspaceId: 'w1', title: 'Workspace', sessionIds: ['s1', 's2', 's3'] }], archivedSessionIds: [] }),
+    useSettings: (selector) => selector(harness.settingsStore.getSnapshot()),
+    t: harness.ctx.locale.bind('projectBoard')
+  });
+  const instance = harness.runtime.mount(entry.component, props, (node) => harness.doc.__setComponentRoot('board-tab', node));
+  instance.render();
+
+  /* The effect measures this node; the harness rebuilds the tree on every render, so the
+     measurement must stay on the original node (a real DOM keeps the same element). */
+  const box = harness.doc.querySelector('.pbx-responsive');
+  assert.ok(box, 'the responsive host is rendered');
+  const boardNode = () => {
+    const host = harness.doc.querySelector('.pbx-responsive');
+    return host && host.children.find((child) => child.tag === 'component');
+  };
+  assert.ok(boardNode(), 'the board itself is mounted inside');
+  assert.equal(boardNode().componentProps.compact, true, 'a narrow pane starts compact');
+
+  // The pane gets wider than the threshold: the observer re-measures and hands the full board on.
+  box.clientWidth = 700;
+  harness.flushResize();
+  instance.render();
+  assert.equal(boardNode().componentProps.compact, false, 'a wide pane renders the full board');
+
+  // ...and back again.
+  box.clientWidth = 400;
+  harness.flushResize();
+  instance.render();
+  assert.equal(boardNode().componentProps.compact, true, 'shrinking switches back to the compact board');
 });
