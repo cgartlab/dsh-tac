@@ -3621,3 +3621,22 @@ test('chat shortcuts that find nothing leave a trace in the log', () => {
     'an instruction jump with no instructions reports why it did nothing'
   );
 });
+test('layout keys dismiss the palette while overlay keys are ignored', () => {
+  const harness = createHarness();
+
+  // Alt+W is a layout action: it closes the palette and then does its job.
+  harness.pressCombo('alt+KeyK');
+  assert.equal(harness.paletteOpen(), true, 'the palette is open');
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyW');
+  assert.equal(harness.paletteOpen(), false, 'Alt+W dismisses the palette');
+  assert.deepEqual(harness.services.calls.layoutToggleSidebar, [true], 'and toggles the sidebar in the same press');
+
+  // Alt+E is an overlay action: with the palette up it is consumed but does nothing.
+  harness.pressCombo('alt+KeyK');
+  harness.clearSpies();
+  const hudPress = harness.pressCombo('alt+KeyE');
+  assert.equal(hudPress.defaultPrevented, true, 'Alt+E is consumed while the palette is open');
+  assert.equal(harness.hudEvents().length, 0, 'no floating-list toggle fires behind the palette');
+  assert.equal(harness.paletteOpen(), true, 'and the palette stays open');
+});

@@ -83,9 +83,11 @@ each action (see `DEFAULT_SETTINGS.shortcuts`). It is registered on mount and ga
 - an open command palette.
 
 While the palette is open its own keys keep working (`Alt+K` closes it, `Alt+I` / `Alt+,` move
-the selection, `Enter` opens, `Esc` closes); the rename, session-menu and board shortcuts
-dismiss the palette first and then act once; every other combo is consumed and ignored, so no
-macOS Option character leaks into the page. A host dialog (any `aria-modal` element that is not
+the selection, `Enter` opens, `Esc` closes); the layout and dialog shortcuts — rename, session
+menu, board (`Alt+N` / `Alt+B` / `Alt+V`) and the left sidebar (`Alt+W`) — dismiss the palette
+first and then act once; every other combo (HUD, interject, hold-scroll, scroll-to-bottom, the
+session cycle) is consumed and ignored without touching its feature, so no macOS Option
+character leaks into the page. A host dialog (any `aria-modal` element that is not
 the palette) blocks every shortcut *without* consuming it, leaving the key to the dialog. The
 narrow-window sidebar drawer (`data-shortcut-modal="sidebar"`) is exempt from that block: DSH
 keeps its own toggle alive in that state, so `Alt+W` must be able to close the drawer it opens.
