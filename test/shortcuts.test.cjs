@@ -528,6 +528,7 @@ function createWindowStub(doc, localStorage) {
   const dispatched = [];
   const listenerMap = new Map();
   let idSeq = 0;
+  let clock = 0;
 
   const win = {
     document: doc,
@@ -541,7 +542,11 @@ function createWindowStub(doc, localStorage) {
     matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }),
     getComputedStyle: () => ({ overflowY: 'visible' }),
     getSelection: () => null,
-    performance: { now: () => 0 },
+    performance: { now: () => clock },
+    /* Tests advance this clock so interval deadlines (history prefetch timeouts) can expire. */
+    __setNow(value) {
+      clock = value;
+    },
     addEventListener(type, handler) {
       if (!listenerMap.has(type)) listenerMap.set(type, []);
       listenerMap.get(type).push(handler);
@@ -2246,4 +2251,139 @@ test('repeated Alt+U taps walk past the row that was just visited', () => {
   assert.ok(older.__classes.has('pbx-user-jump-highlight'), 'the second tap moves on to the next instruction above');
 
   harness.doc.__removeRoot(flow);
+});
+test('holding Alt+U near the top prefetches older history once', () => {
+  const harness = createHarness();
+  const chat = makeScrollableChat(harness, { scrollTop: 400, scrollHeight: 2000 });
+  const loadEarlier = new VirtualNode('button', {}, [], harness.doc);
+  loadEarlier.textContent = '加载更早';
+  loadEarlier.getBoundingClientRect = () => ({ width: 120, height: 28, top: 0, left: 0, right: 120, bottom: 28 });
+  loadEarlier.offsetParent = {};
+  let loads = 0;
+  loadEarlier.click = () => { loads += 1; };
+  harness.doc.__addRoot(loadEarlier);
+
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyU');
+  harness.runTimers();
+
+  let clock = 0;
+  for (let i = 0; i < 3; i += 1) {
+    clock += 16;
+    harness.window.__setNow(clock);
+    harness.runFrame(clock);
+  }
+  assert.equal(loads, 1, 'the host history button is pressed once while approaching the top');
+  assert.ok(chat.scroller.scrollTop < 400, 'the loop keeps scrolling while the page loads');
+
+  // The host page arrives: the poll notices the growth and stops waiting.
+  chat.scroller.scrollHeight = 2400;
+  harness.runIntervals();
+  const waits = harness.window.__intervals.filter((timer) => !timer.cleared && timer.delay === 120);
+  assert.equal(waits.length, 0, 'the growth poll stops once the page has arrived');
+
+  harness.window.dispatchEvent(new KeyboardEventShim('keyup', { code: 'KeyU', altKey: true, bubbles: true }));
+  harness.doc.__removeRoot(loadEarlier);
+  chat.restore();
+});
+
+test('a history page that never arrives ends the held scroll instead of looping forever', () => {
+  const harness = createHarness();
+  const chat = makeScrollableChat(harness, { scrollTop: 30, scrollHeight: 2000 });
+  const loadEarlier = new VirtualNode('button', {}, [], harness.doc);
+  loadEarlier.textContent = '加载更早';
+  loadEarlier.getBoundingClientRect = () => ({ width: 120, height: 28, top: 0, left: 0, right: 120, bottom: 28 });
+  loadEarlier.offsetParent = {};
+  let loads = 0;
+  loadEarlier.click = () => { loads += 1; }; // clicks, but the host never grows the list
+  harness.doc.__addRoot(loadEarlier);
+
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyU');
+  harness.runTimers();
+
+  let clock = 0;
+  for (let i = 0; i < 40; i += 1) {
+    clock += 16;
+    harness.window.__setNow(clock);
+    harness.runFrame(clock);
+  }
+  // The 2600 ms deadline is measured on performance.now(): expire it and let the poll run.
+  harness.window.__setNow(clock + 4000);
+  harness.runIntervals();
+  harness.runFrame(clock + 4016);
+
+  assert.equal(loads, 1, 'the button is pressed once, not in a loop');
+  assert.equal(harness.frameCount(), 0, 'the loop stops after the page fails to arrive');
+
+  harness.window.dispatchEvent(new KeyboardEventShim('keyup', { code: 'KeyU', altKey: true, bubbles: true }));
+  harness.doc.__removeRoot(loadEarlier);
+  chat.restore();
+});
+
+test('a reverted scroll position falls back to stepping by message anchors', () => {
+  const harness = createHarness();
+  const scroller = new VirtualNode('div', { class: 'native-scroll' }, [], harness.doc);
+  const flow = new VirtualNode('div', { 'data-slot': 'conversation.chat.flow' }, [], harness.doc);
+  flow.getBoundingClientRect = () => ({ width: 800, height: 600, top: 0, left: 0, right: 800, bottom: 600 });
+  scroller.appendChild(flow);
+  let stored = 600;
+  Object.defineProperty(scroller, 'scrollTop', {
+    get: () => stored,
+    set: () => { /* the host reverts every plain position write */ }
+  });
+  scroller.scrollHeight = 2000;
+  scroller.clientHeight = 600;
+  scroller.style = { scrollBehavior: '' };
+  scroller.getBoundingClientRect = () => ({ width: 800, height: 600, top: 0, left: 0, right: 800, bottom: 600 });
+  scroller.dispatchEvent = () => true;
+  harness.doc.__addRoot(scroller);
+
+  const anchors = [];
+  for (let i = 0; i < 3; i += 1) {
+    const anchor = new VirtualNode('div', { 'data-chat-anchor-key': 'a' + i }, [], harness.doc);
+    anchor.getBoundingClientRect = () => ({ width: 600, height: 80, top: i * 220 - 100, left: 0, right: 600, bottom: i * 220 - 20 });
+    anchor.scrollIntoView = () => { stored = Math.max(0, stored - 120); anchors.push(i); };
+    scroller.appendChild(anchor);
+  }
+
+  const previousComputedStyle = harness.window.getComputedStyle;
+  harness.window.getComputedStyle = (node) => (node === scroller ? { overflowY: 'auto' } : { overflowY: 'visible' });
+
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyU');
+  harness.runTimers();
+
+  let clock = 0;
+  for (let i = 0; i < 30; i += 1) {
+    clock += 16;
+    harness.window.__setNow(clock);
+    harness.runFrame(clock);
+  }
+
+  assert.ok(anchors.length >= 1, 'a message anchor step is used when plain writes are reverted');
+  assert.ok(stored < 600, 'the anchor step actually moved the view');
+
+  harness.window.dispatchEvent(new KeyboardEventShim('keyup', { code: 'KeyU', altKey: true, bubbles: true }));
+  harness.window.getComputedStyle = previousComputedStyle;
+  harness.doc.__removeRoot(scroller);
+});
+test('Alt+W from a fullscreen board exits fullscreen and toggles the sidebar', () => {
+  const harness = createHarness();
+  const state = connectBoardPane(harness);
+  harness.resetState();
+  harness.clearSpies();
+
+  harness.pressCombo('alt+KeyN');
+  harness.pressCombo('alt+KeyV');
+  assert.equal(state.fullscreen, true, 'the board is fullscreen first');
+
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyW');
+  assert.equal(state.fullscreen, false, 'the fullscreen board is left before the sidebar toggles');
+  assert.deepEqual(harness.services.calls.layoutToggleSidebar, [true], 'the sidebar toggles exactly once');
+  assert.equal(state.expanded, true, 'the board pane itself stays open');
 });
