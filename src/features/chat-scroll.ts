@@ -32,6 +32,8 @@ interface HoldScrollState {
 }
 
 let holdScrollState: HoldScrollState | null = null;
+/** Injected by apply(): whether the user allows automatic history loading. */
+let autoHistoryGate: (() => boolean) | null = null;
 
 /** Stop the hold loop; a short tap (still pending) falls back to the message jump. */
 export function stopHoldScroll(allowJump: boolean): void {
@@ -92,12 +94,26 @@ function startHoldLoop(state: HoldScrollState): void {
   };
   const now = (): number =>
     window.performance && typeof window.performance.now === 'function' ? window.performance.now() : Date.now();
+  /** Auto-loading older history is a user setting; the hold loop must honour it too. */
+  const autoHistoryOn = (): boolean => {
+    try {
+      return autoHistoryGate ? autoHistoryGate() !== false : true;
+    } catch (error) {
+      return true;
+    }
+  };
   const schedule = (): void => {
     state.raf = window.requestAnimationFrame(step);
   };
 
   /** Click the history button and watch for growth without pausing the loop. */
   const requestOlder = (block?: boolean): boolean => {
+    /* The "load history on scroll" setting is off: stop at the boundary instead of clicking
+       the host control behind the user's back. */
+    if (!autoHistoryOn()) {
+      state.exhausted = true;
+      return false;
+    }
     const node = current();
     if (!node) {
       state.mode = 'done';
@@ -292,7 +308,9 @@ export function beginHoldScroll(direction: number, code?: string): void {
 
 /** Key/blur listeners that end a held scroll; installed once per plugin load.
  *  Returns a dispose function so the host can clean them up on hot-reload/unload. */
-export function installChatScrollListeners(): () => void {
+export function installChatScrollListeners(options?: { autoHistory?: () => boolean }): () => void {
+  const previousGate = autoHistoryGate;
+  autoHistoryGate = options && typeof options.autoHistory === 'function' ? options.autoHistory : null;
   const onKeyUp = (event: KeyboardEvent): void => {
     const state = holdScrollState;
     if (!state) return;
@@ -309,6 +327,7 @@ export function installChatScrollListeners(): () => void {
   window.addEventListener('blur', onBlur, true);
   document.addEventListener('keydown', onKeyDown, true);
   return () => {
+    autoHistoryGate = previousGate;
     window.removeEventListener('keyup', onKeyUp, true);
     window.removeEventListener('blur', onBlur, true);
     document.removeEventListener('keydown', onKeyDown, true);

@@ -37,6 +37,8 @@
 
 ## 快捷键
 
+- 失误：`chat.autoHistory` 只传给了被动的 `installChatHistoryAutoLoad`，按住滚动的 `requestOlder` 没接这个开关——关掉设置后按住到顶仍会点「加载更早」→ 规则：一个设置如果影响两条路径（被动滚动监听 + 快捷键循环），必须共用同一个 `enabled` 取值并各自断言；同一类"开关没被快捷键尊重"的问题本轮是第 2 例（上一个是 `board.enabled`） → 证据：本轮修复，`src/features/chat-scroll.ts`、`src/apply.ts`、`test/shortcuts.test.cjs`
+
 - 失误：设置项 `board.enabled` 只挡住了头部入口和看板内容，没挡住 `Alt+N/B/V`——关掉看板后快捷键仍会拉开右侧面板，显示"项目看板已在设置中关闭"的占位，而头部通往看板的入口其实是隐藏的 → 规则：任何"功能开关"都要在**分发器**里同步判断，关闭时把组合键让给应用（与关掉命令面板时的 `Alt+K` 同策略），并配一条"关闭后不消费按键、重新打开立刻恢复"的回归测试 → 证据：本轮修复，`src/features/palette.ts`、`test/shortcuts.test.cjs`
 
 - 失误：按住滚动只在「分发器处理快捷键」的路径里收尾，用鼠标打开命令面板时循环仍在跑——被面板遮住的对话继续滚，而且焦点进入搜索框后松开的 `keyup` 可能收不到 → 规则：任何「抢占键盘 / 遮挡界面」的状态变化（命令面板打开）都必须主动 `stopHoldScroll`，不能只依赖 `keyup` → 证据：本轮修复，`src/features/palette.ts`、`test/shortcuts.test.cjs`

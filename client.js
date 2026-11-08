@@ -926,6 +926,7 @@
   // src/features/chat-scroll.ts
   var HOLD_SCROLL_DELAY = 300;
   var holdScrollState = null;
+  var autoHistoryGate = null;
   function stopHoldScroll(allowJump) {
     const state = holdScrollState;
     if (!state) return;
@@ -978,10 +979,21 @@
       return next;
     };
     const now = () => window.performance && typeof window.performance.now === "function" ? window.performance.now() : Date.now();
+    const autoHistoryOn = () => {
+      try {
+        return autoHistoryGate ? autoHistoryGate() !== false : true;
+      } catch (error) {
+        return true;
+      }
+    };
     const schedule = () => {
       state.raf = window.requestAnimationFrame(step);
     };
     const requestOlder = (block) => {
+      if (!autoHistoryOn()) {
+        state.exhausted = true;
+        return false;
+      }
       const node = current();
       if (!node) {
         state.mode = "done";
@@ -1162,7 +1174,9 @@
       if (holdScrollState === state) startHoldLoop(state);
     }, HOLD_SCROLL_DELAY);
   }
-  function installChatScrollListeners() {
+  function installChatScrollListeners(options) {
+    const previousGate = autoHistoryGate;
+    autoHistoryGate = options && typeof options.autoHistory === "function" ? options.autoHistory : null;
     const onKeyUp = (event) => {
       const state = holdScrollState;
       if (!state) return;
@@ -1179,6 +1193,7 @@
     window.addEventListener("blur", onBlur, true);
     document.addEventListener("keydown", onKeyDown, true);
     return () => {
+      autoHistoryGate = previousGate;
       window.removeEventListener("keyup", onKeyUp, true);
       window.removeEventListener("blur", onBlur, true);
       document.removeEventListener("keydown", onKeyDown, true);
@@ -7310,18 +7325,17 @@
         window.removeEventListener("unhandledrejection", onRejection);
       };
     }, "project-board: error hooks");
-    ctx.effect(() => installChatScrollListeners(), "project-board: chat scroll listeners");
+    const autoHistoryEnabled = () => {
+      try {
+        const chat = settingsStore.getSnapshot().chat;
+        return !chat || chat.autoHistory !== false;
+      } catch (error) {
+        return true;
+      }
+    };
+    ctx.effect(() => installChatScrollListeners({ autoHistory: autoHistoryEnabled }), "project-board: chat scroll listeners");
     ctx.effect(
-      () => installChatHistoryAutoLoad({
-        enabled: () => {
-          try {
-            const chat = settingsStore.getSnapshot().chat;
-            return !chat || chat.autoHistory !== false;
-          } catch (error) {
-            return true;
-          }
-        }
-      }),
+      () => installChatHistoryAutoLoad({ enabled: autoHistoryEnabled }),
       "project-board: chat history auto-load"
     );
     ctx.effect(() => {

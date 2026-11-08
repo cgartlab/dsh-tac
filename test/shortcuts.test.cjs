@@ -3387,3 +3387,35 @@ test('auto-repeat never re-triggers a shortcut', () => {
   assert.equal(harness.timerCount(), armed, 'the repeat does not arm another hold timer');
   harness.window.dispatchEvent(new KeyboardEventShim('keyup', { code: 'KeyU', altKey: true, bubbles: true }));
 });
+test('auto history off stops the held scroll from loading older pages', () => {
+  const harness = createHarness();
+  const settings = harness.settingsStore.getSnapshot();
+  harness.settingsStore.set({ chat: Object.assign({}, settings.chat, { autoHistory: false }) });
+  const chat = makeScrollableChat(harness, { scrollTop: 400, scrollHeight: 2000 });
+  const loadEarlier = new VirtualNode('button', {}, [], harness.doc);
+  loadEarlier.textContent = '加载更早';
+  loadEarlier.getBoundingClientRect = () => ({ width: 120, height: 28, top: 0, left: 0, right: 120, bottom: 28 });
+  loadEarlier.offsetParent = {};
+  let loads = 0;
+  loadEarlier.click = () => { loads += 1; };
+  harness.doc.__addRoot(loadEarlier);
+
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyU');
+  harness.runTimers();
+
+  let clock = 0;
+  for (let i = 0; i < 40; i += 1) {
+    clock += 16;
+    harness.window.__setNow(clock);
+    harness.runFrame(clock);
+  }
+
+  assert.equal(loads, 0, 'the host history button is never pressed while auto-load is off');
+  assert.equal(harness.frameCount(), 0, 'the loop stops at the boundary instead of waiting for a page');
+
+  harness.window.dispatchEvent(new KeyboardEventShim('keyup', { code: 'KeyU', altKey: true, bubbles: true }));
+  harness.doc.__removeRoot(loadEarlier);
+  chat.restore();
+});

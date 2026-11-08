@@ -722,22 +722,21 @@ export function apply(ctx: HostContext): void {
     };
   }, 'project-board: error hooks');
 
-  ctx.effect(() => installChatScrollListeners(), 'project-board: chat scroll listeners');
-
   /* Scrolling to the top of a conversation loads the previous page of history for you,
-     instead of requiring a click on the host's "load earlier" control every time. */
+     instead of requiring a click on the host's "load earlier" control every time. The same
+     setting gates the held-scroll loop's prefetch, so switching it off also stops a held
+     Alt+U from pulling history in the background. */
+  const autoHistoryEnabled = (): boolean => {
+    try {
+      const chat = settingsStore.getSnapshot().chat;
+      return !chat || chat.autoHistory !== false;
+    } catch (error) {
+      return true;
+    }
+  };
+  ctx.effect(() => installChatScrollListeners({ autoHistory: autoHistoryEnabled }), 'project-board: chat scroll listeners');
   ctx.effect(
-    () =>
-      installChatHistoryAutoLoad({
-        enabled: () => {
-          try {
-            const chat = settingsStore.getSnapshot().chat;
-            return !chat || chat.autoHistory !== false;
-          } catch (error) {
-            return true;
-          }
-        }
-      }),
+    () => installChatHistoryAutoLoad({ enabled: autoHistoryEnabled }),
     'project-board: chat history auto-load'
   );
 
