@@ -42,6 +42,7 @@
 - 失误：全屏看板盖住整个框架，`Alt+W` 确实切了侧栏但被挡住，表现成"按了没反应" → 规则：先退出 fullscreen 再 toggle，并在日志里记 `leave-fullscreen`（0.2.4）
 - 失误：客户端插件热重载会留下旧监听器，同一次按键被两个 listener 各 toggle 一次，互相抵消 → 规则：在事件对象上打 `pbxSidebarActed` 标记，只有真正生效的 listener 占有这次按键，后来者记 `leftSidebar:duplicate`（0.2.4）
 - 失误：`layout.toggleSidebar` 失败时静默跳过，"接口不存在 / 调了没生效 / 键没到"三种情况分不清 → 规则：开关按 `layout.toggleSidebar` → `layout.panels.toggleSidebar` → `sidebarLeft.toggleExpanded` 兜底并记录实际路径；260ms 后核对布局，记 `applied` / `no-change` / `unverified`（0.2.1、0.2.3）
+- 失误：热重载遗留的旧监听器会让"全局副作用型"快捷键执行两次——`Alt+E` 连发两个 `pbx-hud-toggle`（开又关，看起来没反应）、`Alt+U` 起两个 rAF 循环（滚动速度翻倍）、`Alt+Enter` 连点两次插话按钮（第二次只剩一条"没有排队消息"的误报）→ 规则：凡有全局副作用的动作（HUD、按住滚动、插话、回到底部、会话循环）执行前都用 `pbxShortcutActed` 认领这次按键；调色板 / 重命名 / 会话菜单的 store 属于插件实例，旧实例切换对用户不可见，**不要**认领（否则活跃实例会被误跳过）→ 证据：本轮修复，`test/shortcuts.test.cjs` 的 Alt+E / Alt+U 重复投递回归
 - 失误：`pbxSidebarActed` 重复检测只加给了 `Alt+W`（leftSidebar），`Alt+N/B/V`（board）没有 → 热重载后 leaked 监听器让 Alt+N toggle 两次互相取消，用户看到"没反应" → 规则：给一个快捷键加重复检测时，检查**所有同类快捷键**是否都需要；board 快捷键用 `pbxBoardActed` 标记，与 sidebar 同模式（0.4.0）
 
 ## 原生侧栏、看板与 HUD 状态

@@ -82,6 +82,22 @@ each action (see `DEFAULT_SETTINGS.shortcuts`). It is registered on mount and ga
 - an open dialog (`aria-modal="true"` present);
 - an open command palette.
 
+While the palette is open its own keys keep working (`Alt+K` closes it, `Alt+I` / `Alt+,` move
+the selection, `Enter` opens, `Esc` closes); the rename, session-menu and board shortcuts
+dismiss the palette first and then act once; every other combo is consumed and ignored, so no
+macOS Option character leaks into the page. A host dialog (any `aria-modal` element that is not
+the palette) blocks every shortcut *without* consuming it, leaving the key to the dialog. The
+narrow-window sidebar drawer (`data-shortcut-modal="sidebar"`) is exempt from that block: DSH
+keeps its own toggle alive in that state, so `Alt+W` must be able to close the drawer it opens.
+
+One physical press acts once. Actions with a global side effect — the HUD toggle window event,
+a hold-scroll loop, a steer click, focus/scroll-to-bottom, opening a session from the cycle —
+claim the event with `pbxShortcutActed`. The board and sidebar keep their own
+`pbxBoardActed` / `pbxSidebarActed` markers because their log lines separate the two cases.
+A leaked listener from a hot reload therefore acts at most once per press; the palette, rename
+and session-menu stores are per plugin instance, so a stale listener toggles its own unmounted
+store and those actions are deliberately *not* claimed.
+
 Hold-to-scroll (`Alt+U` / `Alt+M`) starts a `requestAnimationFrame` loop that resolves the
 live chat scroller each frame, prefetches older history when approaching the top, and
 falls back to anchor scrolling when a position write is reverted by the chat view. It

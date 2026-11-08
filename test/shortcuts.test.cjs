@@ -1330,3 +1330,126 @@ test('every default shortcut combo is wired and produces its side effect', () =>
     checkers[id](event, timerStart);
   }
 });
+
+/* ------------------------------------------------------------ reliability net */
+
+test('a real modal leaves every default shortcut to the dialog', () => {
+  const harness = createHarness();
+  const shortcuts = harness.settingsStore.getSnapshot().shortcuts;
+
+  // A host dialog (settings, confirm, etc.) owns the keyboard while it is open: the plugin
+  // must neither act nor consume, or the dialog's own Alt chords stop working.
+  const modal = new VirtualNode('div', { role: 'dialog', 'aria-modal': 'true', 'aria-label': 'host dialog' }, [], harness.doc);
+  harness.doc.__addRoot(modal);
+
+  for (const id of Object.keys(shortcuts)) {
+    harness.resetState();
+    harness.clearSpies();
+    harness.doc.activeElement = harness.doc.body;
+    const event = harness.pressCombo(shortcuts[id]);
+    assert.equal(event.defaultPrevented, false, 'a host modal leaves ' + shortcuts[id] + ' (' + id + ') to the dialog');
+  }
+
+  assert.equal(harness.paletteOpen(), false, 'no shortcut opens the palette behind a host modal');
+  assert.deepEqual(harness.spies.toggleBoard, [], 'no board shortcut fires behind a host modal');
+  assert.deepEqual(harness.spies.toggleLeftSidebar, [], 'Alt+W does not fire behind a host modal');
+  assert.deepEqual(harness.spies.requestRename, [], 'Alt+R does not fire behind a host modal');
+  assert.deepEqual(harness.spies.requestSessionMenu, [], 'Alt+D does not fire behind a host modal');
+  assert.deepEqual(harness.hudEvents(), [], 'Alt+E does not fire behind a host modal');
+
+  harness.doc.__removeRoot(modal);
+});
+
+test('an extra modifier never matches a configured combo', () => {
+  const harness = createHarness();
+  harness.resetState();
+  harness.clearSpies();
+
+  const variants = [
+    { altKey: true, shiftKey: true },
+    { altKey: true, ctrlKey: true },
+    { altKey: true, metaKey: true },
+    { metaKey: true }
+  ];
+  for (const variant of variants) {
+    harness.pressRaw(Object.assign({ key: 'k', code: 'KeyK', bubbles: true }, variant));
+    assert.equal(harness.paletteOpen(), false, 'combo with extra ' + Object.keys(variant).join('+') + ' must not open the palette');
+  }
+
+  // The configured combo itself still works, so the branch above is not dead code.
+  harness.pressRaw({ key: 'k', code: 'KeyK', altKey: true, bubbles: true });
+  assert.equal(harness.paletteOpen(), true, 'the exact configured combo still opens the palette');
+});
+
+test('a disabled command palette does not swallow its combo', () => {
+  const harness = createHarness();
+  const before = harness.settingsStore.getSnapshot();
+  harness.settingsStore.set({ palette: Object.assign({}, before.palette, { enabled: false }) });
+  harness.render();
+  harness.clearSpies();
+  harness.resetState();
+
+  const event = harness.pressCombo('alt+KeyK');
+  assert.equal(harness.paletteOpen(), false, 'the disabled palette stays closed');
+  assert.equal(event.defaultPrevented, false, 'a disabled palette leaves its combo to the rest of the app');
+});
+
+test('one Alt+E press toggles the floating list once even if it is delivered twice', () => {
+  const harness = createHarness();
+  harness.resetState();
+  harness.clearSpies();
+
+  // Alt+E dispatches a window event, so a leaked listener from a hot reload would dispatch it
+  // twice and the list would toggle open then closed — the press would look dead.
+  const event = new KeyboardEventShim('keydown', { key: 'e', code: 'KeyE', altKey: true, bubbles: true, cancelable: true });
+  harness.doc.dispatchEvent(event);
+  harness.doc.dispatchEvent(event);
+  harness.render();
+  const toggles = harness.hudEvents().filter((type) => type === 'pbx-hud-toggle');
+  assert.equal(toggles.length, 1, 'the duplicated Alt+E delivery dispatches one HUD toggle');
+});
+
+test('one Alt+U press arms a single hold even if it is delivered twice', () => {
+  const harness = createHarness();
+  harness.resetState();
+  harness.clearSpies();
+  const before = harness.timerCount();
+
+  // Two deliveries must not arm two hold loops: a leaked listener keeps its own module state,
+  // so each delivery would start an independent requestAnimationFrame loop on the same scroller.
+  const event = new KeyboardEventShim('keydown', { key: 'u', code: 'KeyU', altKey: true, bubbles: true, cancelable: true });
+  harness.doc.dispatchEvent(event);
+  harness.doc.dispatchEvent(event);
+  harness.render();
+  const holdTimers = harness.window.__timers.slice(before).filter((timer) => timer.delay === 300);
+  assert.equal(holdTimers.length, 1, 'the duplicated Alt+U delivery arms the hold-scroll timer once');
+});
+
+test('palette open: board and dialog shortcuts dismiss it and still act once', () => {
+  const harness = createHarness();
+
+  // Alt+N: the palette is modal, but a board key is an explicit way out of it.
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyK');
+  assert.equal(harness.paletteOpen(), true, 'the palette opens first');
+  harness.pressCombo('alt+KeyN');
+  assert.equal(harness.paletteOpen(), false, 'Alt+N dismisses the palette');
+  assert.deepEqual(harness.spies.toggleBoard, ['narrow'], 'Alt+N still toggles the board once');
+
+  // Alt+R: the rename dialog replaces the palette rather than stacking behind it.
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyK');
+  harness.pressCombo('alt+KeyR');
+  assert.equal(harness.paletteOpen(), false, 'Alt+R dismisses the palette');
+  assert.deepEqual(harness.spies.requestRename, [['s2', 'Beta']], 'Alt+R requests the rename once');
+
+  // Alt+D: same for the session menu.
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyK');
+  harness.pressCombo('alt+KeyD');
+  assert.equal(harness.paletteOpen(), false, 'Alt+D dismisses the palette');
+  assert.deepEqual(harness.spies.requestSessionMenu, [['s2', 'Beta']], 'Alt+D requests the session menu once');
+});

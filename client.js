@@ -4035,6 +4035,14 @@
   }
 
   // src/features/palette.ts
+  function claimPress(event) {
+    if (event.pbxShortcutActed === true) return false;
+    try {
+      event.pbxShortcutActed = true;
+    } catch (error) {
+    }
+    return true;
+  }
   function Palette(props) {
     const { useSessions, useSessionStatus, useWorkspaces, t, openSession } = props;
     const usePalette = typeof props.usePalette === "function" ? props.usePalette : fallbackHook();
@@ -4237,10 +4245,11 @@
           return;
         }
         if (matchCombo(event, shortcuts.palette)) {
+          if (settingsRef.current.palette.enabled === false) return;
           event.preventDefault();
           event.stopPropagation();
           stopHoldScroll(false);
-          if (settingsRef.current.palette.enabled !== false && palette) palette.toggle("open");
+          if (palette) palette.toggle("open");
           return;
         }
         if (paletteOpenRef.current && matchCombo(event, shortcuts.prev)) {
@@ -4328,6 +4337,10 @@
           event.preventDefault();
           event.stopPropagation();
           stopHoldScroll(false);
+          if (!claimPress(event)) {
+            logEvent("info", "shortcut", "hud:duplicate", {});
+            return;
+          }
           if (typeof props.toggleHud === "function") props.toggleHud();
           return;
         }
@@ -4340,6 +4353,10 @@
           event.preventDefault();
           event.stopPropagation();
           stopHoldScroll(false);
+          if (!claimPress(event)) {
+            logEvent("info", "shortcut", "interject:duplicate", {});
+            return;
+          }
           const acted = interjectEarliestQueued();
           if (!acted && typeof props.notify === "function") {
             props.notify({ tone: "warn", title: "", message: t("toast.interjectNone") });
@@ -4355,6 +4372,10 @@
           }
           event.preventDefault();
           event.stopPropagation();
+          if (!claimPress(event)) {
+            logEvent("info", "shortcut", "hold:duplicate", {});
+            return;
+          }
           beginHoldScroll(isUserNext ? 1 : -1, event.code);
           return;
         }
@@ -4366,6 +4387,10 @@
           event.preventDefault();
           event.stopPropagation();
           stopHoldScroll(false);
+          if (!claimPress(event)) {
+            logEvent("info", "shortcut", "scrollBottom:duplicate", {});
+            return;
+          }
           scrollToComposerAndFocus();
           return;
         }
@@ -4381,6 +4406,10 @@
           if (active.length === 0) return;
           event.preventDefault();
           event.stopPropagation();
+          if (!claimPress(event)) {
+            logEvent("info", "shortcut", "cycle:duplicate", {});
+            return;
+          }
           const position = active.findIndex((row) => row.id === cycle.current);
           const count = active.length;
           const next = isNext ? position < 0 ? 0 : (position + 1) % count : position < 0 ? count - 1 : (position - 1 + count) % count;

@@ -19,8 +19,28 @@ import { interjectEarliestQueued, scrollToComposerAndFocus } from './interject';
 import type { PaletteSnapshot, PaletteStore } from './header';
 import type { SessionListSnapshot, SessionStatusMap, WorkspaceSnapshot } from '../core/snapshot';
 
-/** Native keydown events carrying the plugin's own "this press was handled" marker. */
-type PluginKeyEvent = KeyboardEvent & { pbxSidebarActed?: boolean; pbxBoardActed?: boolean };
+/** Native keydown events carrying the plugin's own "this press was handled" markers. */
+type PluginKeyEvent = KeyboardEvent & { pbxSidebarActed?: boolean; pbxBoardActed?: boolean; pbxShortcutActed?: boolean };
+
+/**
+ * One physical press can reach several listeners after a client-plugin hot reload. Actions
+ * with a global side effect — the HUD toggle window event, a hold-scroll loop, a steer click,
+ * focusing the composer, opening a session — would run twice, and a toggle run twice cancels
+ * itself out so the key looks dead. The first listener to act claims the press.
+ *
+ * (The palette store, rename store and session-menu store are per plugin instance, so a stale
+ * listener toggles its own unmounted store: claiming those would make the live instance skip
+ * a press it alone can serve, so they stay unclaimed.)
+ */
+function claimPress(event: PluginKeyEvent): boolean {
+  if (event.pbxShortcutActed === true) return false;
+  try {
+    event.pbxShortcutActed = true;
+  } catch (error) {
+    /* frozen event */
+  }
+  return true;
+}
 
 export interface FocusStore {
   set(patch: { id?: string | null; at?: number }): void;
@@ -284,10 +304,12 @@ export function Palette(props: PaletteProps): unknown {
         return;
       }
       if (matchCombo(event as KeyEventLike, shortcuts.palette)) {
+        /* A disabled palette leaves its combo to the rest of the app instead of swallowing it. */
+        if (settingsRef.current.palette.enabled === false) return;
         event.preventDefault();
         event.stopPropagation();
         stopHoldScroll(false);
-        if (settingsRef.current.palette.enabled !== false && palette) palette.toggle('open');
+        if (palette) palette.toggle('open');
         return;
       }
       if (paletteOpenRef.current && matchCombo(event as KeyEventLike, shortcuts.prev)) {
@@ -383,6 +405,10 @@ export function Palette(props: PaletteProps): unknown {
         event.preventDefault();
         event.stopPropagation();
         stopHoldScroll(false);
+        if (!claimPress(event)) {
+          logEvent('info', 'shortcut', 'hud:duplicate', {});
+          return;
+        }
         if (typeof props.toggleHud === 'function') props.toggleHud();
         return;
       }
@@ -395,6 +421,10 @@ export function Palette(props: PaletteProps): unknown {
         event.preventDefault();
         event.stopPropagation();
         stopHoldScroll(false);
+        if (!claimPress(event)) {
+          logEvent('info', 'shortcut', 'interject:duplicate', {});
+          return;
+        }
         const acted = interjectEarliestQueued();
         if (!acted && typeof props.notify === 'function') {
           props.notify({ tone: 'warn', title: '', message: t('toast.interjectNone') });
@@ -410,6 +440,10 @@ export function Palette(props: PaletteProps): unknown {
         }
         event.preventDefault();
         event.stopPropagation();
+        if (!claimPress(event)) {
+          logEvent('info', 'shortcut', 'hold:duplicate', {});
+          return;
+        }
         beginHoldScroll(isUserNext ? 1 : -1, event.code);
         return;
       }
@@ -421,6 +455,10 @@ export function Palette(props: PaletteProps): unknown {
         event.preventDefault();
         event.stopPropagation();
         stopHoldScroll(false);
+        if (!claimPress(event)) {
+          logEvent('info', 'shortcut', 'scrollBottom:duplicate', {});
+          return;
+        }
         scrollToComposerAndFocus();
         return;
       }
@@ -436,6 +474,10 @@ export function Palette(props: PaletteProps): unknown {
         if (active.length === 0) return;
         event.preventDefault();
         event.stopPropagation();
+        if (!claimPress(event)) {
+          logEvent('info', 'shortcut', 'cycle:duplicate', {});
+          return;
+        }
         const position = active.findIndex((row) => row.id === cycle.current);
         const count = active.length;
         const next = isNext ? (position < 0 ? 0 : (position + 1) % count) : position < 0 ? count - 1 : (position - 1 + count) % count;
