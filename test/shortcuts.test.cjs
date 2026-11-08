@@ -3419,3 +3419,26 @@ test('auto history off stops the held scroll from loading older pages', () => {
   harness.doc.__removeRoot(loadEarlier);
   chat.restore();
 });
+test('the palette honours the include-archived setting', () => {
+  const harness = createHarness();
+  harness.setWorkspaces({
+    items: [{ workspaceId: 'w1', title: 'Workspace', sessionIds: ['s1', 's2', 's3'] }],
+    archivedSessionIds: ['s3']
+  });
+
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyK');
+  assert.equal(harness.doc.querySelectorAll('.pbx-prow').length, 3, 'archived sessions are listed by default');
+
+  const settings = harness.settingsStore.getSnapshot();
+  harness.settingsStore.set({ palette: Object.assign({}, settings.palette, { includeArchived: false }) });
+  harness.render();
+  assert.equal(harness.doc.querySelectorAll('.pbx-prow').length, 2, 'turning the option off hides archived sessions');
+
+  const input = harness.doc.querySelector('.pbx-paletteInput');
+  input.props.onKeyDown({ key: 'Enter', preventDefault() {}, stopPropagation() {}, currentTarget: input });
+  harness.render();
+  assert.equal(harness.services.calls.openSession.length, 1, 'the first visible row still opens');
+  assert.notEqual(harness.services.calls.openSession[0], 's3', 'the hidden archived row is not reachable');
+});

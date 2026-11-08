@@ -105,6 +105,23 @@ sends one synthetic wheel signal before the first write because DSH can hold a p
 scroll anchor that would otherwise pull the view back every frame, and holding down to the
 bottom focuses the composer.
 
+### Settings that own a shortcut path
+
+Every setting that can make a shortcut *look broken* is checked in one place. The rule is
+"the setting gates the path": when the feature is off, the combo is either left to the rest of
+the app or turned into a clean no-op — never a half-working surface.
+
+| Setting | Who honours it | Behaviour when off |
+| --- | --- | --- |
+| `palette.enabled` | dispatcher, before the palette branch | `Alt+K` is not consumed (the key is left to the app) |
+| `board.enabled` | dispatcher, before the board branch | `Alt+N` / `Alt+B` / `Alt+V` are not consumed; the capsule entry is hidden too |
+| `chat.autoHistory` | passive `installChatHistoryAutoLoad` **and** the hold loop's `requestOlder` (one getter injected from `apply`) | a held `Alt+U` stops at the boundary instead of clicking «load earlier»; a single tap still loads one page, because that is an explicit press |
+| `palette.includeArchived` | palette row builder | archived sessions disappear from the list reachable from `Alt+K` |
+| `hud.enabled` | HUD toggle handler — deliberately the opposite direction | `Alt+E` turns the list back **on** (there is no other affordance once it is hidden); this is the one switch a shortcut is allowed to flip |
+
+Two of these were real bugs found by asserting the table rather than reading it: `board.enabled`
+and `chat.autoHistory` only gated the passive/UI paths and not the shortcut path.
+
 ### macOS labels and top clearance
 
 `IS_MAC` in `src/core/combos.ts` reads `navigator.userAgentData.platform` /
