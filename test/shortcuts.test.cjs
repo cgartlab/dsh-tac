@@ -225,6 +225,10 @@ class VirtualNode {
     if (this.ownerDocument && this.ownerDocument.activeElement === this) this.ownerDocument.activeElement = this.ownerDocument.body;
   }
 
+  select() {
+    this.selection = [0, String(this.value === undefined ? '' : this.value).length];
+  }
+
   scrollIntoView() {}
 
   click() {}
@@ -2724,4 +2728,88 @@ test('a clean shortcut map reports no self-conflict anywhere', () => {
   const logs = harness.registrations.find((item) => item.spec.id === 'project-board-settings').spec.inject().hooks.logs;
   const duplicates = logs.getSnapshot().entries.filter((item) => item.message === 'duplicate binding');
   assert.equal(duplicates.length, 0, 'no duplicate-binding log entries for unique bindings');
+});
+/** Dialog components return a form element; run convertTree on the form itself so its real
+ *  markup (role=dialog, aria-modal) lands in the virtual document. */
+function mountReturnedForm(harness, component, props, rootKey) {
+  const element = component(props);
+  const target = element && typeof element === 'object' && element.type && typeof element.type !== 'string' ? element : null;
+  const instance = target
+    ? harness.runtime.mount(target.type, target.props || {}, (node) => harness.doc.__setComponentRoot(rootKey, node))
+    : harness.runtime.mount(component, props, (node) => harness.doc.__setComponentRoot(rootKey, node));
+  instance.render();
+  return instance;
+}
+/* ------------------------------------------------- plugin-owned dialogs (modal) */
+
+function mountRenameDialog(harness, request) {
+  const entry = harness.registrations.find((item) => item.spec.id === 'project-board-rename');
+  assert.ok(entry, 'the rename dialog is registered');
+  const injected = entry.spec.inject();
+  injected.rename.set({ sessionId: request.sessionId, currentTitle: request.currentTitle, at: Date.now() });
+  const props = Object.assign({}, injected, {
+    useRename: (selector) => selector(injected.hooks.rename.getSnapshot()),
+    t: harness.ctx.locale.bind('projectBoard')
+  });
+  // convertTree treats nested components as opaque, so mount the form the dialog returns.
+  const instance = mountReturnedForm(harness, entry.component, props, 'rename');
+  return { instance, injected };
+}
+
+function mountSessionMenu(harness, request) {
+  const entry = harness.registrations.find((item) => item.spec.id === 'project-board-session-menu');
+  assert.ok(entry, 'the session menu is registered');
+  const injected = entry.spec.inject();
+  injected.hooks.sessionMenu.set({ sessionId: request.sessionId, title: request.title, at: Date.now() });
+  const props = Object.assign({}, injected, {
+    useSessionMenu: (selector) => selector(injected.hooks.sessionMenu.getSnapshot()),
+    t: harness.ctx.locale.bind('projectBoard')
+  });
+  const instance = mountReturnedForm(harness, entry.component, props, 'session-menu');
+  return { instance, injected };
+}
+
+test('an open rename dialog leaves every shortcut to the dialog', () => {
+  const harness = createHarness();
+  const shortcuts = harness.settingsStore.getSnapshot().shortcuts;
+  mountRenameDialog(harness, { sessionId: 's2', currentTitle: 'Beta' });
+  assert.ok(harness.doc.querySelector('.pbx-renameCard'), 'the rename dialog is rendered');
+
+  for (const id of Object.keys(shortcuts)) {
+    harness.resetState();
+    harness.clearSpies();
+    harness.doc.activeElement = harness.doc.body;
+    const event = harness.pressCombo(shortcuts[id]);
+    assert.equal(event.defaultPrevented, false, shortcuts[id] + ' (' + id + ') is left to the rename dialog');
+  }
+  assert.equal(harness.paletteOpen(), false, 'no shortcut opens the palette behind the dialog');
+  assert.deepEqual(harness.spies.requestRename, [], 'Alt+R does not stack a second rename dialog');
+  assert.deepEqual(harness.spies.requestSessionMenu, [], 'Alt+D does not open the menu behind the dialog');
+  assert.deepEqual(harness.spies.toggleBoard, [], 'no board shortcut fires behind the dialog');
+  assert.deepEqual(harness.hudEvents(), [], 'Alt+E does not fire behind the dialog');
+});
+
+test('an open session menu leaves every shortcut to the dialog', () => {
+  const harness = createHarness();
+  const shortcuts = harness.settingsStore.getSnapshot().shortcuts;
+  const menu = mountSessionMenu(harness, { sessionId: 's2', title: 'Beta' });
+  assert.ok(harness.doc.querySelector('.pbx-renameCard'), 'the session menu is rendered');
+
+  for (const id of Object.keys(shortcuts)) {
+    harness.resetState();
+    harness.clearSpies();
+    harness.doc.activeElement = harness.doc.body;
+    const event = harness.pressCombo(shortcuts[id]);
+    assert.equal(event.defaultPrevented, false, shortcuts[id] + ' (' + id + ') is left to the session menu');
+  }
+  assert.deepEqual(harness.spies.requestSessionMenu, [], 'Alt+D does not stack a second menu');
+  assert.deepEqual(harness.spies.toggleLeftSidebar, [], 'Alt+W does not fire behind the dialog');
+
+  // A host without a delete API: the destructive action is disabled and stays disabled.
+  const danger = harness.doc.querySelectorAll('.pbx-menuOption.danger')[0];
+  assert.ok(danger, 'the delete option is rendered');
+  assert.equal(danger.disabled, true, 'delete is disabled when the host exposes no delete API');
+  const archive = harness.doc.querySelectorAll('.pbx-menuOption')[0];
+  assert.equal(archive.disabled, false, 'archive stays available');
+  assert.equal(menu.injected.deleteSupported, false, 'the injected capability flag agrees');
 });
