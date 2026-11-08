@@ -106,6 +106,12 @@ class VirtualNode {
     this.style = this.props.style || {};
     this.children = [];
     this.parentNode = null;
+    /* The plugin walks up the tree (scroller discovery, closest()); mirror the DOM accessor. */
+    Object.defineProperty(this, 'parentElement', {
+      get() {
+        return this.parentNode && this.parentNode.tag !== '#text' ? this.parentNode : null;
+      }
+    });
     this.isConnected = true;
     this.textContent = '';
     this.value = '';
@@ -860,6 +866,15 @@ function createHarness() {
     },
     runTimers() {
       for (const timer of win.__timers.slice()) if (!timer.cleared) timer.fn();
+    },
+    /** Run the animation frames queued so far; each callback may schedule the next one. */
+    runFrame(timestamp) {
+      const queued = win.__frames.splice(0);
+      for (const frame of queued) frame.fn(timestamp);
+      return queued.length;
+    },
+    frameCount() {
+      return win.__frames.length;
     },
     pressRaw,
     pressCombo,
@@ -2112,4 +2127,123 @@ test('every shortcut that must work while typing still does', () => {
 
   harness.doc.__removeRoot(dock);
   harness.doc.__removeRoot(backToBottom);
+});
+/* ------------------------------------------------------- hold-to-scroll loop */
+
+function makeScrollableChat(harness, options) {
+  const settings = options || {};
+  const scroller = new VirtualNode('div', { class: 'native-scroll' }, [], harness.doc);
+  const flow = new VirtualNode('div', { 'data-slot': 'conversation.chat.flow' }, [], harness.doc);
+  flow.getBoundingClientRect = () => ({ width: 800, height: 600, top: 0, left: 0, right: 800, bottom: 600 });
+  scroller.appendChild(flow);
+  scroller.scrollTop = typeof settings.scrollTop === 'number' ? settings.scrollTop : 600;
+  scroller.scrollHeight = typeof settings.scrollHeight === 'number' ? settings.scrollHeight : 2000;
+  scroller.clientHeight = 600;
+  scroller.style = { scrollBehavior: 'smooth' };
+  scroller.getBoundingClientRect = () => ({ width: 800, height: 600, top: 0, left: 0, right: 800, bottom: 600 });
+  scroller.dispatchEvent = () => true;
+  harness.doc.__addRoot(scroller);
+  const previousComputedStyle = harness.window.getComputedStyle;
+  harness.window.getComputedStyle = (node) => (node === scroller ? { overflowY: 'auto' } : { overflowY: 'visible' });
+  return {
+    scroller,
+    restore() {
+      harness.window.getComputedStyle = previousComputedStyle;
+      harness.doc.__removeRoot(scroller);
+    }
+  };
+}
+
+test('holding Alt+U scrolls the conversation up and stops on release', () => {
+  const harness = createHarness();
+  const chat = makeScrollableChat(harness);
+  harness.resetState();
+  harness.clearSpies();
+
+  harness.pressCombo('alt+KeyU');
+  harness.runTimers(); // the 300 ms hold delay elapses and the loop starts
+
+  let clock = 0;
+  for (let i = 0; i < 8; i += 1) {
+    clock += 16;
+    harness.runFrame(clock);
+  }
+  assert.ok(chat.scroller.scrollTop < 600, 'the conversation scrolled up while the key was held');
+  assert.equal(chat.scroller.style.scrollBehavior, 'auto', 'the plugin drives the scroller while held');
+
+  harness.window.dispatchEvent(new KeyboardEventShim('keyup', { code: 'KeyU', altKey: true, bubbles: true }));
+  const releasedAt = chat.scroller.scrollTop;
+  for (let i = 0; i < 4; i += 1) {
+    clock += 16;
+    harness.runFrame(clock);
+  }
+  assert.equal(chat.scroller.scrollTop, releasedAt, 'the loop stops after the key is released');
+  assert.equal(chat.scroller.style.scrollBehavior, 'smooth', 'the original scroll-behavior is restored');
+
+  chat.restore();
+});
+
+test('holding Alt+M to the bottom focuses the composer once', () => {
+  const harness = createHarness();
+  const chat = makeScrollableChat(harness, { scrollTop: 1400, scrollHeight: 2000 });
+  const composer = harness.makeEditable();
+  composer.getBoundingClientRect = () => ({ width: 320, height: 96, top: 600, left: 0, right: 320, bottom: 696 });
+  harness.doc.__addRoot(composer);
+  harness.doc.activeElement = harness.doc.body;
+
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyM');
+  harness.runTimers();
+
+  let clock = 0;
+  for (let i = 0; i < 3; i += 1) {
+    clock += 16;
+    harness.runFrame(clock);
+  }
+  assert.equal(harness.doc.activeElement, composer, 'the composer is focused when the held scroll reaches the bottom');
+
+  harness.window.dispatchEvent(new KeyboardEventShim('keyup', { code: 'KeyM', altKey: true, bubbles: true }));
+  harness.doc.activeElement = harness.doc.body;
+  for (let i = 0; i < 3; i += 1) {
+    clock += 16;
+    harness.runFrame(clock);
+  }
+  assert.equal(harness.doc.activeElement, harness.doc.body, 'the focus is not stolen again after release');
+
+  chat.restore();
+});
+
+test('repeated Alt+U taps walk past the row that was just visited', () => {
+  const harness = createHarness();
+  const flow = new VirtualNode('div', { 'data-slot': 'conversation.chat.flow' }, [], harness.doc);
+  flow.getBoundingClientRect = () => ({ width: 800, height: 600, top: 0, left: 0, right: 800, bottom: 600 });
+  function row(top) {
+    const node = new VirtualNode('div', { 'data-slot': 'conversation.chat.user.content' }, [], harness.doc);
+    node.getBoundingClientRect = () => ({ width: 600, height: 40, top, left: 0, right: 600, bottom: top + 40 });
+    const classes = new Set();
+    node.classList = { add: (name) => classes.add(name), remove: (name) => classes.delete(name), contains: (name) => classes.has(name) };
+    node.offsetWidth = 0;
+    node.__classes = classes;
+    flow.appendChild(node);
+    return node;
+  }
+  const older = row(-200);
+  const nearer = row(-50);
+  row(200);
+  harness.doc.__addRoot(flow);
+
+  harness.resetState();
+  harness.clearSpies();
+
+  harness.pressCombo('alt+KeyU');
+  harness.window.dispatchEvent(new KeyboardEventShim('keyup', { code: 'KeyU', altKey: true, bubbles: true }));
+  assert.ok(nearer.__classes.has('pbx-user-jump-highlight'), 'the first tap jumps to the nearest instruction above the viewport');
+
+  // A second tap inside the 700 ms window must skip the row it just visited.
+  harness.pressCombo('alt+KeyU');
+  harness.window.dispatchEvent(new KeyboardEventShim('keyup', { code: 'KeyU', altKey: true, bubbles: true }));
+  assert.ok(older.__classes.has('pbx-user-jump-highlight'), 'the second tap moves on to the next instruction above');
+
+  harness.doc.__removeRoot(flow);
 });
