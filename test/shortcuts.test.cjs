@@ -3666,3 +3666,32 @@ test('the same board key closes each mode it opened', () => {
   harness.pressCombo('alt+KeyN');
   assert.equal(state.expanded, false, 'the same key closes the narrow pane');
 });
+test('a floating list at its default anchor only collapses when the sidebar opens', () => {
+  const harness = createHarness();
+  const closed = '0px minmax(400px, 1fr) minmax(0px, 800px)';
+  const opened = '280px minmax(400px, 1fr) minmax(0px, 800px)';
+  const frame = new VirtualNode('div', { className: 'AppFrame_frame', style: { gridTemplateColumns: closed }, 'data-sidebar-collapsed': 'true' }, [], harness.doc);
+  frame.attributes.style = 'grid-template-columns: ' + closed;
+  const column = new VirtualNode('div', { class: '_sidebarCol' }, [], harness.doc);
+  column.getBoundingClientRect = () => ({ width: 280, height: 800, top: 0, left: 0, right: 280, bottom: 800 });
+  frame.appendChild(column);
+  harness.doc.__addRoot(frame);
+
+  const hud = harness.mountHud('hud');
+  assert.equal(hud.node.style.left, undefined, 'the list starts from its CSS anchor, not a moved position');
+  assert.ok(/default/.test(hud.node.className), 'and reports the default anchor');
+
+  frame.style.gridTemplateColumns = opened;
+  frame.attributes.style = 'grid-template-columns: ' + opened;
+  frame.removeAttribute('data-sidebar-collapsed');
+  harness.runIntervals();
+  hud.render();
+  harness.runTimers();
+  hud.render();
+
+  assert.equal(/collapsed/.test(hud.node.className), true, 'it collapses while the sidebar is open');
+  assert.equal(hud.node.style.left, undefined, 'but keeps its anchor instead of jumping across the screen');
+  assert.ok(/default/.test(hud.node.className), 'and still reports the default anchor');
+
+  harness.doc.__removeRoot(frame);
+});

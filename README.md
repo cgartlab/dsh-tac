@@ -23,16 +23,18 @@ reading, and desktop-class task notifications.
   the board.
 - **Floating session HUD** — live active/recent sessions with timers, attention badges,
   automation markers, drag-to-move, and an animated pill ⇄ list collapse; while the native
-  left sidebar is open it tucks into the bottom-right corner and returns when that closes. One stable order:
+  left sidebar is open the list collapses to a pill that sits just right of that sidebar and
+  returns when it closes (a list you dragged keeps its own vertical spot; one still at its
+  default anchor only collapses, it does not jump across the screen). One stable order:
   active sessions first, most recent activity first within a group; switching sessions
   highlights the new row without reshuffling the list, and `⌥+I` / `⌥+,` cycle in
   exactly that order.
 - **Search palette** — fuzzy session search, project scoping, keyboard navigation and
   jump-to-session.
-- **Hold-to-scroll reading** — the conversation scrolls smoothly while the key is held,
-  loads older history automatically before reaching the boundary, and falls back to anchor
-  stepping if the chat view reverts a position write. Holding `⌥+M` down to the end
-  activates the composer so a reply can be typed immediately.
+- **Hold-to-scroll reading** — the conversation scrolls smoothly while the key is held and
+  loads older history automatically before reaching the boundary (when "history on scroll"
+  is enabled), falling back to anchor stepping if the chat view reverts a position write.
+  Holding `⌥+M` down to the end activates the composer so a reply can be typed immediately.
 - **History on scroll** — scrolling a long conversation to the top loads the previous page
   of older messages without clicking "Load earlier" every time. On by default, switchable
   off in settings. It drives the host's own pager, so its loading and error feedback and its
