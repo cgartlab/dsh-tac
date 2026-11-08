@@ -1800,3 +1800,178 @@ test('auto-repeat and IME composition never trigger a shortcut', () => {
   harness.pressRaw({ key: 'k', code: 'KeyK', altKey: true, bubbles: true });
   assert.equal(harness.paletteOpen(), true, 'a fresh press opens the palette');
 });
+/* ------------------------------------------------------- board pane (stateful) */
+
+/**
+ * Make the stubbed host behave like DSH's right pane: opening a tab and expanding the pane
+ * create a `[class*="_panel"][data-sidebar-right-open]` node, `layout.panels.setRightbar`
+ * changes the measured column width and `toggleFullscreen` toggles the fullscreen marker.
+ * The plugin reads that same markup, so the three-state board logic can be exercised end to end.
+ */
+function connectBoardPane(harness) {
+  const state = { kind: null, expanded: false, fullscreen: false, width: 0 };
+  const panel = new VirtualNode('div', { class: '_panel' }, [], harness.doc);
+  const column = new VirtualNode('div', { 'data-rightbar-col': '' }, [], harness.doc);
+  const fullscreenNode = new VirtualNode('div', { 'data-rightbar-fullscreen': 'true' }, [], harness.doc);
+  column.getBoundingClientRect = () => ({ width: state.width, height: 400, top: 0, left: 800, right: 800 + state.width, bottom: 400 });
+  harness.doc.__addRoot(column);
+
+  function sync() {
+    const open = Boolean(state.kind && state.expanded);
+    if (open) panel.setAttribute('data-sidebar-right-open', '');
+    else panel.removeAttribute('data-sidebar-right-open');
+    if (open) harness.doc.__addRoot(panel);
+    else harness.doc.__removeRoot(panel);
+    if (state.fullscreen) harness.doc.__addRoot(fullscreenNode);
+    else harness.doc.__removeRoot(fullscreenNode);
+  }
+
+  harness.services.sidebarRight.active = () => (state.kind ? { kind: state.kind } : undefined);
+  harness.services.sidebarRight.isExpanded = () => state.expanded;
+  harness.services.sidebarRight.openTab = (kind) => {
+    state.kind = kind;
+    harness.services.calls.sidebarOpenTab.push(kind);
+    sync();
+  };
+  harness.services.sidebarRight.toggleExpanded = () => {
+    state.expanded = !state.expanded;
+    if (state.expanded && !state.width) state.width = 380;
+    harness.services.calls.sidebarToggleExpanded.push(state.expanded);
+    sync();
+  };
+  harness.services.sidebarRight.commandTarget = () => (state.kind ? 'board' : undefined);
+  harness.services.sidebarRight.toggleFullscreen = () => {
+    state.fullscreen = !state.fullscreen;
+    sync();
+  };
+  harness.services.layout.panels.setRightbar = (px) => {
+    state.width = px;
+    harness.services.calls.setRightbar.push(px);
+  };
+  return state;
+}
+
+test('Alt+N opens the narrow board and the next press closes it', () => {
+  const harness = createHarness();
+  const state = connectBoardPane(harness);
+  harness.resetState();
+  harness.clearSpies();
+
+  harness.pressCombo('alt+KeyN');
+  assert.equal(state.kind, BOARD_KIND, 'the native board tab is opened');
+  assert.equal(state.expanded, true, 'the pane is expanded');
+  assert.equal(state.width, 380, 'the narrow width is applied');
+
+  harness.pressCombo('alt+KeyN');
+  assert.equal(state.expanded, false, 'the same key closes the pane it opened');
+});
+
+test('Alt+B on a narrow board resizes it and closes on the next press', () => {
+  const harness = createHarness();
+  const state = connectBoardPane(harness);
+  harness.resetState();
+  harness.clearSpies();
+
+  harness.pressCombo('alt+KeyN');
+  harness.pressCombo('alt+KeyB');
+  assert.equal(state.expanded, true, 'a different size key keeps the pane open');
+  assert.equal(state.width, Math.round(harness.window.innerWidth * 0.5), 'the half width is applied');
+
+  harness.pressCombo('alt+KeyB');
+  assert.equal(state.expanded, false, 'the same key then closes the half-width pane');
+});
+
+test('Alt+V opens fullscreen from an open board and closes on the next press', () => {
+  const harness = createHarness();
+  const state = connectBoardPane(harness);
+  harness.resetState();
+  harness.clearSpies();
+
+  harness.pressCombo('alt+KeyN');
+  harness.pressCombo('alt+KeyV');
+  assert.equal(state.expanded, true, 'the pane stays open');
+  assert.equal(state.fullscreen, true, 'the pane goes fullscreen');
+
+  harness.pressCombo('alt+KeyV');
+  assert.equal(state.expanded, false, 'the same key closes the fullscreen pane');
+});
+
+test('Alt+N from a fullscreen board leaves fullscreen and lands on the narrow width', () => {
+  const harness = createHarness();
+  const state = connectBoardPane(harness);
+  harness.resetState();
+  harness.clearSpies();
+
+  harness.pressCombo('alt+KeyN');
+  harness.pressCombo('alt+KeyV');
+  assert.equal(state.fullscreen, true, 'the board is fullscreen');
+
+  harness.pressCombo('alt+KeyN');
+  assert.equal(state.fullscreen, false, 'a size key leaves fullscreen');
+  assert.equal(state.expanded, true, 'the pane stays open');
+  assert.equal(state.width, 380, 'and lands on the narrow width');
+});
+/* ------------------------------------------------------------ session cycle */
+
+test('the session cycle handles a single session', () => {
+  const harness = createHarness();
+  const savedIds = SESSION_FIXTURE.ids;
+  const savedById = SESSION_FIXTURE.byId;
+  try {
+    SESSION_FIXTURE.ids = ['s2'];
+    SESSION_FIXTURE.byId = { s2: savedById.s2 };
+    harness.resetState();
+    harness.clearSpies();
+    harness.render();
+
+    harness.pressCombo('alt+Comma');
+    assert.deepEqual(harness.services.calls.openSession, ['s2'], 'next opens the only session');
+
+    harness.clearSpies();
+    harness.pressCombo('alt+KeyI');
+    assert.deepEqual(harness.services.calls.openSession, ['s2'], 'previous opens the only session');
+  } finally {
+    SESSION_FIXTURE.ids = savedIds;
+    SESSION_FIXTURE.byId = savedById;
+  }
+});
+
+test('the session cycle follows the floating list order', () => {
+  const harness = createHarness();
+  harness.resetState();
+  harness.clearSpies();
+
+  // The floating list publishes the order its rows are shown in; the cycle must follow that
+  // order instead of re-sorting by activity. The default order here would be s1, s2, s3.
+  const orderStore = harness.registrations.find((entry) => entry.spec.id === 'project-board-palette').spec.inject().hooks.hudOrder;
+  orderStore.set({ ids: ['s1', 's3', 's2'] });
+  harness.render();
+
+  harness.pressCombo('alt+Comma');
+  assert.deepEqual(harness.services.calls.openSession, ['s1'], 'next follows the published order (s2 wraps to s1)');
+
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyI');
+  assert.deepEqual(harness.services.calls.openSession, ['s3'], 'previous follows the published order (s2 -> s3)');
+});
+
+test('the session cycle starts from an end when the current session is not listed', () => {
+  const harness = createHarness();
+  const saved = SESSION_FIXTURE.byId.s2;
+  try {
+    delete SESSION_FIXTURE.byId.s2.retainedBy;
+    harness.resetState();
+    harness.clearSpies();
+    harness.render();
+
+    harness.pressCombo('alt+KeyI');
+    assert.deepEqual(harness.services.calls.openSession, ['s3'], 'previous wraps to the last row when there is no current session');
+
+    harness.clearSpies();
+    harness.pressCombo('alt+Comma');
+    assert.deepEqual(harness.services.calls.openSession, ['s1'], 'next starts at the first row when there is no current session');
+  } finally {
+    SESSION_FIXTURE.byId.s2 = saved;
+    harness.render();
+  }
+});
