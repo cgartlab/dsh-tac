@@ -103,7 +103,7 @@
 
 ## 本机网络与工具
 
-- 失误：本机 `git` 全局配了 `http.proxy = http://127.0.0.1:7900`，本地代理没启动时 `git fetch/push` 直接失败（`Failed to connect to github.com port 443 via 127.0.0.1`），而 `gh` 走 API 一切正常，很容易误判成"仓库/权限坏了" → 规则：先看 `git config --get http.proxy` 与端口是否有监听；绕过用 `git -c http.proxy= -c https.proxy= …`，大 pack 传输再叠加 `-c http.version=HTTP/1.1`（2026-11-06 实测：HTTP/2 直连会被 reset，HTTP/1.1 能过）
+- 失误：本机 `git` 全局配了 HTTP 代理，本地代理没启动时 `git fetch/push` 直接失败（`Failed to connect to github.com port 443`），而 `gh` 走 API 一切正常，很容易误判成"仓库/权限坏了" → 规则：先看 `git config --get http.proxy` 与端口是否有监听；绕过用 `git -c http.proxy= -c https.proxy= …`，大 pack 传输再叠加 `-c http.version=HTTP/1.1`（2026-11-06 实测：HTTP/2 直连会被 reset，HTTP/1.1 能过）
 - 失误：`git pull` 会在网络阶段再 fetch 一次，网络抖动时明明已经 `fetch` 成功却 pull 失败 → 规则：已经 `git fetch` 到本地后，用 `git merge --ff-only origin/main` 完成快进，不重复走网络
 - 失误：用占位符写提交身份时抄错一个字符（`{{EMAIL_…}}` 少一位），git 不会校验，commit author 变成未替换的字面量；两次都是推送前才靠 `git log -1 --format='%an <%ae>'` 发现 → 规则：每次 `commit` 之后、`push` 之前都跑一次 `git log -1 --format='%an <%ae>'`；发现错了用 `git commit --amend --no-edit --reset-author`（amend 会保留原 author，必须带 `--reset-author`），已推送的不要改写
 
