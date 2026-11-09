@@ -4,11 +4,28 @@
 
 ## 当前待办
 
-| 改进 | 说明 | 参考提交 |
-| --- | --- | --- |
-| ChatViewport 精确滚动 | 通过 DSH 的 ChatViewport owner API（`write()` / `metrics()` / `scrollToTurn()`）驱动滚动；当前实现是 `scrollTop` 写入 + wheel 信号，能用但更依赖 DOM 细节 | `6f0c934` |
+暂无。
 
-选用建议：这项属于大改，建议单独开分支验证后再合，不要和当前实现混在一起。
+### 已关闭：ChatViewport 精确滚动（前提不成立）
+
+原条目写的是"通过 DSH 的 ChatViewport owner API（`write()` / `metrics()` / `scrollToTurn()`）
+驱动滚动，当前实现是 `scrollTop` 写入 + wheel 信号，能用但更依赖 DOM 细节"，并建议单独开分支。
+
+2026-11-09 用 `cordis_inspect_query` 核对宿主实际暴露的接口后，确认**这个前提不存在**：
+
+- `conversation.chat.flow` 的 `ownerProps` 只有四个数据字段（`entries` / `pendingInputs` /
+  `lastInputTurn` / `deferCollapse`），没有任何视口或滚动方法；
+- 它的 `standardProps` 里的 `useChat` / `useConversation` / `useTrajectory` 等 hook 也不提供滚动控制；
+- 客户端服务目录（`slots` / `layout` / `sessions` / `theme` / `timer` / `uiWorkspace` /
+  `workspaces` / `locale`）里没有与聊天视口相关的服务；
+- 代码里**从未**出现过 `scrollToTurn` / `metrics()` / `scrollToMessage`。参考提交 `6f0c934` 的
+  message 写着 "drive the transcript through DSH's ChatViewport"，但那次提交实际做的是按
+  `overflowY` 探测 DOM 滚动容器（`src/features/chat-dom.ts`），message 与实现不符——
+  所以"当前实现只是临时方案"这个判断本身也是错的。
+
+结论：现在的做法（`scrollTop` 写入 + `data-chat-anchor-key` 锚点 + `scrollIntoView` 兜底）
+是没有宿主接口时的上限，**不是待替换的临时方案**。要做到真正精确，需要上游把视口能力暴露到
+slot props 或客户端服务里；在那之前重复尝试没有意义。
 
 ## 已从 backlog 取走
 
