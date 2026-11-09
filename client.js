@@ -7739,12 +7739,30 @@
     const cancelSession = async (sessionId) => {
       try {
         const remote = ctx.remote;
-        const cancel = remote && remote.session && typeof remote.session.cancel === "function" ? remote.session.cancel : null;
+        const session = remote && remote.session ? remote.session : null;
+        const cancel = session && typeof session.cancel === "function" ? session.cancel : null;
         if (!cancel) return { ok: false, error: { code: "unsupported", message: "stopping a turn is unavailable" } };
-        const result = await cancel.call(remote.session, { sessionId });
-        if (!result || result.ok !== false) return { ok: true };
-        const error = result.error;
-        return { ok: false, error: error || { code: "cancel-failed", message: "the host rejected the stop request" } };
+        const attempts = [
+          () => cancel.call(session, { sessionId }),
+          () => cancel.call(session)
+        ];
+        let code = "";
+        let message = "";
+        for (const attempt of attempts) {
+          try {
+            const result = await attempt();
+            if (!result || result.ok !== false) return { ok: true };
+            const error = result.error;
+            code = error && error.code || "cancel-failed";
+            message = error && error.message || "the host rejected the stop request";
+            if (code !== "invalid" && code !== "unsupported" && code !== "invalid-argument") break;
+          } catch (error) {
+            const rpc = error?.rpcError;
+            code = rpc && rpc.code || "";
+            message = String(error && error.message || error);
+          }
+        }
+        return { ok: false, error: { code, message } };
       } catch (error) {
         const rpc = error?.rpcError;
         return {

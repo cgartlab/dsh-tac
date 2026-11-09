@@ -458,3 +458,14 @@ test('the two board surfaces keep separate view requests', () => {
   assert.match(source, /main: createUiStore/);
   assert.match(source, /requestBoardView\("projects", "main"\)/);
 });
+
+test('the stop-turn and failure notifications are wired into the shipped bundle', () => {
+  /* The session menu offers a third action and the notifier can report a failure, so both
+     dictionaries must carry the copy in the built artifact — adding a key to src/ without
+     rebuilding used to leave the UI showing the raw key. */
+  for (const key of ['menu.stopTitle', 'menu.stopHint', 'menu.stopUnavailable', 'notif.failTitle', 'notif.failBodyReason']) {
+    assert.ok(source.includes('"' + key + '"'), 'the bundle embeds ' + key);
+  }
+  assert.match(source, /remote\.session\.cancel|cancel\.call\(/, 'the stop action reaches the host');
+  assert.match(source, /lastAgentError/, 'the notifier can read a failure reason from the snapshot');
+});

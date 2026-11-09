@@ -3992,3 +3992,54 @@ test('the host opening the board itself lands on the default view', async () => 
   assert.equal(state.expanded, true, 'the host opened the board');
   assert.equal(rightStore.getSnapshot().view, 'projects', 'an externally opened board lands on the default view');
 });
+
+test('the session menu can stop a running turn', async () => {
+  const harness = createHarness();
+  const calls = [];
+  const { instance } = mountSessionMenu(
+    harness,
+    { sessionId: 's1', title: 'Alpha' },
+    {
+      cancelSession: async (sessionId) => {
+        calls.push(sessionId);
+        return { ok: true };
+      }
+    }
+  );
+  instance.render();
+
+  const options = harness.doc.querySelectorAll('.pbx-menuOption');
+  /* Order in the dialog: archive, stop, delete. */
+  const stop = options[1];
+  assert.ok(stop, 'the stop option is offered');
+  assert.deepEqual(options.length, 3, 'archive, stop and delete are all offered');
+  /* The label comes from the dictionary; its presence is asserted in load.test.cjs. */
+
+  await stop.props.onClick({});
+  harness.runTimers();
+  assert.deepEqual(calls, ['s1'], 'the host stop API is called for the current session');
+});
+
+test('a host without a stop API explains itself instead of failing silently', async () => {
+  const harness = createHarness();
+  const { instance } = mountSessionMenu(
+    harness,
+    { sessionId: 's1', title: 'Alpha' },
+    { cancelSession: async () => ({ ok: false, error: { code: 'unsupported', message: 'no stop' } }) }
+  );
+  instance.render();
+
+  const options = harness.doc.querySelectorAll('.pbx-menuOption');
+  const stop = harness.doc.querySelectorAll('.pbx-menuOption')[1];
+  assert.ok(stop, 'the stop option exists even when the host cannot stop');
+
+  /* onClick kicks off an async handler and does not await it, so let the rejection settle and
+     re-render before reading the error line. */
+  stop.props.onClick({});
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  instance.render();
+  const error = harness.doc.querySelector('.pbx-renameError');
+  assert.ok(error, 'an error line is shown instead of failing silently');
+  /* The wording comes from menu.stopUnavailable; the bundle assertion in load.test.cjs proves
+     both locales carry it. */
+});

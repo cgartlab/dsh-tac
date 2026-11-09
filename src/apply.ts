@@ -785,14 +785,35 @@ export function apply(ctx: HostContext): void {
   ): Promise<{ ok?: boolean; error?: { code?: string; message?: string } }> => {
     try {
       const remote = ctx.remote as unknown as {
-        session?: { cancel?: (input: { sessionId: string }) => Promise<{ ok?: boolean; error?: { code?: string; message?: string } } | void> };
+        session?: { cancel?: (input?: unknown) => Promise<{ ok?: boolean; error?: { code?: string; message?: string } } | void> };
       } | undefined;
-      const cancel = remote && remote.session && typeof remote.session.cancel === 'function' ? remote.session.cancel : null;
+      const session = remote && remote.session ? remote.session : null;
+      const cancel = session && typeof session.cancel === 'function' ? session.cancel : null;
       if (!cancel) return { ok: false, error: { code: 'unsupported', message: 'stopping a turn is unavailable' } };
-      const result = await cancel.call(remote!.session, { sessionId: sessionId });
-      if (!result || (result as { ok?: boolean }).ok !== false) return { ok: true };
-      const error = (result as { error?: { code?: string; message?: string } }).error;
-      return { ok: false, error: error || { code: 'cancel-failed', message: 'the host rejected the stop request' } };
+      /* The client contract exposes this as a remote projection taking `{ sessionId }`, while a
+         bound session face takes no argument at all. Try the projection first and fall back to
+         the bare call; a genuine rejection (anything but an argument mismatch) is final. */
+      const attempts: Array<() => Promise<unknown>> = [
+        () => cancel.call(session, { sessionId: sessionId }),
+        () => cancel.call(session)
+      ];
+      let code = '';
+      let message = '';
+      for (const attempt of attempts) {
+        try {
+          const result = await attempt();
+          if (!result || (result as { ok?: boolean }).ok !== false) return { ok: true };
+          const error = (result as { error?: { code?: string; message?: string } }).error;
+          code = (error && error.code) || 'cancel-failed';
+          message = (error && error.message) || 'the host rejected the stop request';
+          if (code !== 'invalid' && code !== 'unsupported' && code !== 'invalid-argument') break;
+        } catch (error) {
+          const rpc = (error as { rpcError?: { code?: string; message?: string } } | null)?.rpcError;
+          code = (rpc && rpc.code) || '';
+          message = String((error && (error as Error).message) || error);
+        }
+      }
+      return { ok: false, error: { code: code, message: message } };
     } catch (error) {
       const rpc = (error as { rpcError?: { code?: string } } | null)?.rpcError;
       return {
