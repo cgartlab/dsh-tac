@@ -851,6 +851,7 @@ function createHarness(options) {
     toggleHud: [],
     requestRename: [],
     requestSessionMenu: [],
+    unarchive: [],
     notify: []
   };
 
@@ -873,6 +874,7 @@ function createHarness(options) {
     toggleHud: () => { spies.toggleHud.push(true); return injected.toggleHud(); },
     requestRename: (id, title) => { spies.requestRename.push([id, title]); return injected.requestRename(id, title); },
     requestSessionMenu: (id, title) => { spies.requestSessionMenu.push([id, title]); return injected.requestSessionMenu(id, title); },
+    unarchiveSession: (id) => { spies.unarchive.push(id); return { ok: true }; },
     notify: (payload) => { spies.notify.push(payload); return injected.notify(payload); }
   });
 
@@ -3336,8 +3338,8 @@ test('Escape in the palette drops the project filter before it closes the panel'
   assert.equal(harness.paletteOpen(), true, 'the palette is open');
 
   const chips = harness.doc.querySelectorAll('.pbx-pchip');
-  assert.equal(chips.length, 2, 'the palette offers an all-projects chip and one project chip');
-  chips[1].props.onClick({});
+  assert.equal(chips.length, 3, 'the palette offers all-projects, archived-only and one project chip');
+  chips[2].props.onClick({});
   harness.render();
   const active = harness.doc.querySelectorAll('.pbx-pchip.on');
   assert.equal(active.length, 1, 'one chip owns the filter');
@@ -4183,4 +4185,67 @@ test('inject() hands the stack the real store instead of a dead hooks bag', () =
   const injected = entry.spec.inject();
   assert.ok(injected.toasts && typeof injected.toasts.getSnapshot === 'function', 'inject() passes the store itself');
   assert.equal(typeof injected.toasts.subscribe, 'function', 'with a subscribe the component can use');
+});
+
+/* ------------------------------------------- palette: archived filter + restore */
+
+test('the archived chip narrows the palette to archived sessions only', () => {
+  const harness = createHarness();
+  harness.setWorkspaces({
+    items: [{ workspaceId: 'w1', title: 'Workspace', sessionIds: ['s1', 's2', 's3'] }],
+    archivedSessionIds: ['s2']
+  });
+  harness.resetState();
+  harness.pressCombo('alt+KeyK');
+  assert.equal(harness.paletteOpen(), true, 'the palette opens');
+
+  const chips = harness.doc.querySelectorAll('.pbx-pchip');
+  assert.ok(chips.length >= 2, 'the archived chip sits beside the all-projects chip');
+  chips[1].props.onClick({});
+  harness.render();
+
+  const rows = harness.doc.querySelectorAll('.pbx-prow');
+  assert.equal(rows.length, 1, 'only archived sessions remain');
+  assert.ok(/archived/.test(rows[0].className), 'the surviving row is marked archived');
+  assert.ok(harness.doc.querySelector('.pbx-prowUnarchive'), 'and it offers a restore control');
+});
+
+test('the archived filter ignores the includeArchived preference when switched on', () => {
+  const harness = createHarness();
+  harness.setWorkspaces({
+    items: [{ workspaceId: 'w1', title: 'Workspace', sessionIds: ['s1', 's2'] }],
+    archivedSessionIds: ['s2']
+  });
+  harness.settingsStore.set({ palette: { includeArchived: false } });
+  harness.resetState();
+  harness.pressCombo('alt+KeyK');
+  harness.doc.querySelectorAll('.pbx-pchip')[1].props.onClick({});
+  harness.render();
+  const rows = harness.doc.querySelectorAll('.pbx-prow');
+  assert.equal(rows.length, 1, 'an explicit archived filter still shows archived rows');
+  harness.settingsStore.set({ palette: { includeArchived: true } });
+});
+
+test('restoring from an archived row does not open the session', async () => {
+  const harness = createHarness();
+  harness.setWorkspaces({
+    items: [{ workspaceId: 'w1', title: 'Workspace', sessionIds: ['s1', 's2', 's3'] }],
+    archivedSessionIds: ['s2']
+  });
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyK');
+  harness.doc.querySelectorAll('.pbx-pchip')[1].props.onClick({});
+  harness.render();
+
+  const restore = harness.doc.querySelector('.pbx-prowUnarchive');
+  assert.ok(restore, 'the archived row offers a restore control');
+  let stopped = false;
+  restore.props.onClick({ stopPropagation: () => { stopped = true; }, preventDefault() {} });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(stopped, true, 'the click stops at the restore control');
+  assert.deepEqual(harness.spies.unarchive, ['s2'], 'the host restore API is called with that session');
+  assert.deepEqual(harness.spies.notify.map((item) => item.tone), ['success'], 'the outcome is surfaced');
+  assert.equal(harness.paletteOpen(), true, 'the palette stays open for further restores');
 });

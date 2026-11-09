@@ -87,6 +87,8 @@ export interface PaletteProps {
   toggleHud?: () => void;
   requestRename?: (id: string, title: string) => void;
   requestSessionMenu?: (id: string, title: string) => void;
+  /** Restore an archived session from the row itself, without leaving the palette. */
+  unarchiveSession?: (id: string) => Promise<{ ok?: boolean; error?: { message?: string } } | void> | { ok?: boolean } | void;
   notify?: (payload: { tone: string; title: string; message: string }) => void;
   t: Translate;
 }
@@ -112,6 +114,9 @@ export function Palette(props: PaletteProps): unknown {
   const [query, setQuery] = useState('');
   const [index, setIndex] = useState(0);
   const [scope, setScope] = useState<string | null>(null);
+  /* Filter the list down to archived sessions only. Kept separate from `scope` because it is a
+     different axis: a reader may want archived sessions of one project, or all of them. */
+  const [archivedOnly, setArchivedOnly] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [closing, setClosing] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -149,7 +154,9 @@ export function Palette(props: PaletteProps): unknown {
     const row = byId[id];
     if (!row || row.blank || row.origin === 'subagent') continue;
     const isArchived = archived.has(id);
-    if (isArchived && !includeArchived) continue;
+    /* The archived-only filter is an explicit request for those rows, so it overrides the
+       "include archived in search" preference instead of fighting it. */
+    if (isArchived && !includeArchived && !archivedOnly) continue;
     const workspace = wsBySession.get(id);
     const spec = workspace ? projectSpec(workspace.workspaceId) : { color: paletteFor(''), icon: 'folder' };
     const info = statusInfo(statuses ? statuses.get(id) : undefined, row);
@@ -190,7 +197,12 @@ export function Palette(props: PaletteProps): unknown {
 
   const q = query.trim().toLowerCase();
   const visibleSessions = rows
-    .filter((row) => (!scope || row.projectId === scope) && (!q || row.title.toLowerCase().includes(q) || row.project.toLowerCase().includes(q)))
+    .filter(
+      (row) =>
+        (!archivedOnly || row.archived) &&
+        (!scope || row.projectId === scope) &&
+        (!q || row.title.toLowerCase().includes(q) || row.project.toLowerCase().includes(q))
+    )
     .sort((a, b) => {
       const diff = toneRank(a) - toneRank(b);
       return diff !== 0 ? diff : b.updatedAt - a.updatedAt;
@@ -210,6 +222,32 @@ export function Palette(props: PaletteProps): unknown {
     ...pluginSettings.map((entry) => ({ kind: 'setting' as const, entry: entry })),
     ...visibleSessions.map((row) => ({ kind: 'session' as const, row: row }))
   ];
+
+  /* Restore one archived session in place, without leaving the palette. The row disappears only
+     when the workspace snapshot drops its id, so the list keeps its shape while the host works. */
+  const unarchive = async (row: PaletteRow): Promise<void> => {
+    const call = props.unarchiveSession;
+    if (typeof call !== 'function') {
+      if (typeof props.notify === 'function') {
+        props.notify({ tone: 'warn', title: t('palette.archived'), message: t('palette.unarchiveUnavailable') });
+      }
+      return;
+    }
+    let result: { ok?: boolean; error?: { message?: string } } | void = null as unknown as void;
+    try {
+      result = await call(row.id);
+    } catch (error) {
+      result = { ok: false, error: { message: String((error && (error as Error).message) || error) } };
+    }
+    if (typeof props.notify !== 'function') return;
+    const ok = !result || (result as { ok?: boolean }).ok !== false;
+    const reason = (result as { error?: { message?: string } })?.error?.message;
+    props.notify(
+      ok
+        ? { tone: 'success', title: t('palette.archived'), message: t('palette.unarchived') }
+        : { tone: 'warn', title: t('palette.archived'), message: reason || t('palette.unarchiveFailed') }
+    );
+  };
 
   useEffect(() => {
     if (!mounted || !state.open || !inputRef.current) return;
@@ -581,8 +619,11 @@ export function Palette(props: PaletteProps): unknown {
     } else if (event.key === 'Escape') {
       event.preventDefault();
       event.stopPropagation();
-      if (scope) setScope(null);
-      else close();
+      /* Filters come off before the panel does, so Escape unwinds the narrowest state first. */
+      if (scope || archivedOnly) {
+        setScope(null);
+        setArchivedOnly(false);
+      } else close();
     }
   };
 
@@ -645,6 +686,29 @@ export function Palette(props: PaletteProps): unknown {
           row.info.tone === 'running' ? h(RunRing, { size: 9 }) : h('span', { className: 'pbx-rdot', 'data-tone': row.info.tone }),
           h('span', { className: 'pbx-prowTitle' }, row.title),
           row.archived ? h('span', { className: 'pbx-prowArchived' }, t('palette.archived')) : null,
+          row.archived
+            ? h(
+                'span',
+                {
+                  className: 'pbx-prowUnarchive',
+                  role: 'button',
+                  tabIndex: -1,
+                  title: t('palette.unarchive'),
+                  'aria-label': t('palette.unarchive'),
+                  /* The row itself opens the session, so restoring has to stop the click before it
+                     reaches the row handler. */
+                  onClick: (event: Event) => {
+                    event.stopPropagation();
+                    event.preventDefault();
+                    void unarchive(row);
+                  },
+                  onKeyDown: (event: KeyboardEvent) => {
+                    event.stopPropagation();
+                  }
+                },
+                h(Icon, { name: 'unarchive', size: 13 })
+              )
+            : null,
           h(
             'span',
             { className: 'pbx-prowMeta' },
@@ -705,8 +769,10 @@ export function Palette(props: PaletteProps): unknown {
           }
           if (event.key !== 'Escape') return;
           event.preventDefault();
-          if (scope) setScope(null);
-          else close();
+          if (scope || archivedOnly) {
+          setScope(null);
+          setArchivedOnly(false);
+        } else close();
         }
       },
       h(
@@ -737,6 +803,20 @@ export function Palette(props: PaletteProps): unknown {
             }
           },
           t('palette.allProjects')
+        ),
+        h(
+          'button',
+          {
+            type: 'button',
+            className: 'pbx-pchip archived' + (archivedOnly ? ' on' : ''),
+            title: t('palette.archivedOnlyHint'),
+            onClick: () => {
+              setArchivedOnly(!archivedOnly);
+              if (inputRef.current) inputRef.current.focus();
+            }
+          },
+          h('span', { className: 'pbx-pchipIcon' }, h(Icon, { name: 'archive', size: 12 })),
+          t('palette.archivedOnly')
         ),
         projects.map((project) =>
           h(

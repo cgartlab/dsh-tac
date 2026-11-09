@@ -52,6 +52,12 @@ reading, and desktop-class task notifications.
   but the section cannot be preselected, an info toast says so; if it cannot be opened at
   all, a warn toast points you to the sidebar — a partial success is never silent. Sections
   the host or other plugins add later appear in search without a plugin update.
+- **Archived sessions on their own** — one chip ("Archived only", archive glyph) narrows the
+  list to archived sessions and switches back on a second click. Each archived row carries a
+  **restore** button that unarchives it in place, without leaving the search or opening another
+  screen. The filter is an explicit request, so it still shows archived rows even when
+  "include archived in search" is switched off. `Esc` clears the filters (project and archived
+  together) before a second press closes the panel.
 - **Hold-to-scroll reading** — the conversation scrolls smoothly while the key is held,
   loads older history automatically before reaching the boundary (when "history on scroll"
   is enabled), and falls back to anchor stepping if the chat view reverts a position write.

@@ -253,6 +253,14 @@ export const CSS: string = [
       '.pbx-hudArchive:active{transform:translateY(-50%) scale(.92)}',
       '.pbx-prowArchived{font-size:10.5px;line-height:16px;padding:0 6px;border-radius:999px;background:color-mix(in srgb,var(--dsw-alias-label-secondary) 14%,transparent);color:var(--dsw-alias-label-secondary);flex:none;white-space:nowrap}',
       '.pbx-prow.archived .pbx-prowTitle{color:var(--dsw-alias-label-secondary)}',
+      /* Restore-from-archive control sitting inside an archived row. Hidden until the row is
+         hovered or focused so it never competes with the title, but always reachable by keyboard
+         once the row has focus. */
+      '.pbx-prowUnarchive{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;margin-left:4px;padding:0;border:1px solid transparent;border-radius:5px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer;flex:none;opacity:0;pointer-events:none;transition:opacity var(--pbx-dur-micro) var(--pbx-ease-standard),background var(--pbx-dur-micro) var(--pbx-ease-standard),color var(--pbx-dur-micro) var(--pbx-ease-standard)}',
+      '.pbx-prow:hover .pbx-prowUnarchive,.pbx-prow:focus-within .pbx-prowUnarchive,.pbx-prow.active .pbx-prowUnarchive{opacity:1;pointer-events:auto}',
+      '.pbx-prowUnarchive:hover{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 16%,transparent);border-color:var(--dsw-alias-border-l1);color:var(--dsw-alias-brand-primary)}',
+      '.pbx-prowUnarchive:active{transform:scale(.92)}',
+      '.pbx-pchip.archived.on{background:color-mix(in srgb,var(--dsw-alias-label-secondary) 18%,transparent);border-color:var(--dsw-alias-border-l2)}',
       '.pbx-hudFoot{position:relative;display:flex;flex-direction:column;gap:4px;padding:7px 10px 8px;border-top:1px solid color-mix(in srgb,var(--dsw-alias-border-l1) 65%,transparent);opacity:1;transition:opacity var(--pbx-dur-small) var(--pbx-ease-standard)}',
       '.pbx-hudFoot:hover{opacity:1}',
       '.pbx-hudFootRow{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding-right:16px;min-width:0}',

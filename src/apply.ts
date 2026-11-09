@@ -724,6 +724,20 @@ export function apply(ctx: HostContext): void {
       return { ok: false, error: { code: rpc && rpc.code ? rpc.code : '', message: String((error && (error as Error).message) || error) } };
     }
   };
+  /** Undo an archive: put the session back into the active and recent lists. */
+  const unarchiveSession = async (sessionId: string): Promise<{ ok?: boolean; error?: { code?: string; message?: string } }> => {
+    try {
+      const workspaces = optionalService<{ unarchiveSession?: (id: string) => Promise<void> }>(ctx, 'workspaces');
+      if (!workspaces || typeof workspaces.unarchiveSession !== 'function') {
+        return { ok: false, error: { code: 'unsupported', message: 'session unarchive is unavailable' } };
+      }
+      await workspaces.unarchiveSession(sessionId);
+      return { ok: true };
+    } catch (error) {
+      const rpc = (error as { rpcError?: { code?: string } } | null)?.rpcError;
+      return { ok: false, error: { code: rpc && rpc.code ? rpc.code : '', message: String((error && (error as Error).message) || error) } };
+    }
+  };
   const sessionDeleteApi = (): ((input: { sessionId: string }) => Promise<{ ok?: boolean; error?: { message?: string } }>) | null => {
     const owns = (object: unknown, name: string): boolean => {
       try {
@@ -1026,6 +1040,7 @@ export function apply(ctx: HostContext): void {
           toggleHud: toggleHud,
           requestRename: requestRename,
           requestSessionMenu: requestSessionMenu,
+          unarchiveSession: unarchiveSession,
           notify: pushToast,
           chooseSetting: chooseSetting,
           hooks: { palette: paletteStore, settings: settingsStore, settingsCatalog: settingsCatalogStore, focus: focusStore, hudOrder: hudOrderStore }
@@ -1080,7 +1095,7 @@ export function apply(ctx: HostContext): void {
   );
   ctx.slots.inject('shell.overlay', () =>
     ctx.slots.register(
-      { name: 'shell.overlay', id: 'project-board-toast', order: 45, locale: NS, inject: () => ({ dismissToast: dismissToast, toasts: toastStore }) },
+      { name: 'shell.overlay', id: 'project-board-toast', order: 45, locale: NS, inject: () => ({ dismissToast: dismissToast, toasts: toastStore, hooks: { toasts: toastStore } }) },
       ToastStack as unknown as (props: never) => unknown
     )
   );

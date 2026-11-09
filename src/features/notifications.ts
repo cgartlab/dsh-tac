@@ -45,7 +45,13 @@ function useStoreSnapshot<T extends object>(store: UiStore<T> | undefined, empty
 
 export function ToastStack(props: ToastStackProps): unknown {
   const { t, dismissToast } = props;
-  const snap = useStoreSnapshot(props.toasts, EMPTY_TOASTS);
+  /* Prefer the store handed in directly; fall back to the hook the host derives from
+     `hooks.toasts` for builds that only provide that. A fallback hook keeps the call count
+     stable either way. */
+  const useToasts = typeof props.useToasts === 'function' ? props.useToasts : fallbackHook<ToastSnapshot>();
+  const hookSnap = useToasts((value) => value) as ToastSnapshot | null;
+  const storeSnap = useStoreSnapshot(props.toasts, EMPTY_TOASTS);
+  const snap = (hookSnap && hookSnap.items && hookSnap.items.length > 0 ? hookSnap : null) || storeSnap;
   const items = (snap && snap.items) || [];
   if (items.length === 0) return null;
   return h(

@@ -26,7 +26,9 @@ export const PATHS: Record<string, string[]> = {
       down: ['M6 9l6 6 6-6'],
       bottom: ['M12 4v12', 'M7 11l5 5 5-5', 'M5 20h14'],
       left: ['M19 12H5', 'M11 6l-6 6 6 6'],
-      archive: ['M12 4.5v7.5', 'M8.4 9L12 12.6 15.6 9', 'M4.5 13v4.5A2 2 0 0 0 6.5 19.5h11a2 2 0 0 0 2-2V13']
+      archive: ['M12 4.5v7.5', 'M8.4 9L12 12.6 15.6 9', 'M4.5 13v4.5A2 2 0 0 0 6.5 19.5h11a2 2 0 0 0 2-2V13'],
+      /* The archive glyph with the arrow reversed: a box with content coming back out. */
+      unarchive: ['M12 12.6V5.1', 'M8.4 8.7L12 5.1 15.6 8.7', 'M4.5 13v4.5A2 2 0 0 0 6.5 19.5h11a2 2 0 0 0 2-2V13']
 };
 
 export interface NativeIcon {

@@ -1,4 +1,4 @@
-/*! dsh-tac 0.4.3 — generated from src/ by scripts/build.mjs; do not edit */
+/*! dsh-tac 0.5.0 — generated from src/ by scripts/build.mjs; do not edit */
 "use strict";
 (() => {
   // src/constants.ts
@@ -1661,6 +1661,14 @@
     ".pbx-hudArchive:active{transform:translateY(-50%) scale(.92)}",
     ".pbx-prowArchived{font-size:10.5px;line-height:16px;padding:0 6px;border-radius:999px;background:color-mix(in srgb,var(--dsw-alias-label-secondary) 14%,transparent);color:var(--dsw-alias-label-secondary);flex:none;white-space:nowrap}",
     ".pbx-prow.archived .pbx-prowTitle{color:var(--dsw-alias-label-secondary)}",
+    /* Restore-from-archive control sitting inside an archived row. Hidden until the row is
+       hovered or focused so it never competes with the title, but always reachable by keyboard
+       once the row has focus. */
+    ".pbx-prowUnarchive{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;margin-left:4px;padding:0;border:1px solid transparent;border-radius:5px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer;flex:none;opacity:0;pointer-events:none;transition:opacity var(--pbx-dur-micro) var(--pbx-ease-standard),background var(--pbx-dur-micro) var(--pbx-ease-standard),color var(--pbx-dur-micro) var(--pbx-ease-standard)}",
+    ".pbx-prow:hover .pbx-prowUnarchive,.pbx-prow:focus-within .pbx-prowUnarchive,.pbx-prow.active .pbx-prowUnarchive{opacity:1;pointer-events:auto}",
+    ".pbx-prowUnarchive:hover{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 16%,transparent);border-color:var(--dsw-alias-border-l1);color:var(--dsw-alias-brand-primary)}",
+    ".pbx-prowUnarchive:active{transform:scale(.92)}",
+    ".pbx-pchip.archived.on{background:color-mix(in srgb,var(--dsw-alias-label-secondary) 18%,transparent);border-color:var(--dsw-alias-border-l2)}",
     ".pbx-hudFoot{position:relative;display:flex;flex-direction:column;gap:4px;padding:7px 10px 8px;border-top:1px solid color-mix(in srgb,var(--dsw-alias-border-l1) 65%,transparent);opacity:1;transition:opacity var(--pbx-dur-small) var(--pbx-ease-standard)}",
     ".pbx-hudFoot:hover{opacity:1}",
     ".pbx-hudFootRow{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding-right:16px;min-width:0}",
@@ -1938,6 +1946,12 @@
     "hud.archive": "Archive session",
     "hud.archiveUnavailable": "This DSH client exposes no archive entry point; use the session actions dialog instead.",
     "palette.archived": "Archived",
+    "palette.archivedOnly": "Archived only",
+    "palette.archivedOnlyHint": "Show archived sessions only; click again for all",
+    "palette.unarchive": "Restore from archive",
+    "palette.unarchived": "Session restored",
+    "palette.unarchiveFailed": "Restore failed",
+    "palette.unarchiveUnavailable": "This DSH client exposes no unarchive entry point.",
     "settings.paletteArchived": "Include archived sessions in search",
     "settings.paletteArchivedDesc": "On by default; turn it off to search only sessions that are not archived",
     "settings.title": "Project Board settings",
@@ -2217,6 +2231,12 @@
     "hud.archive": "归档会话",
     "hud.archiveUnavailable": "当前 DSH 客户端没有提供归档接口，请在会话操作弹窗里归档。",
     "palette.archived": "已归档",
+    "palette.archivedOnly": "只看已归档",
+    "palette.archivedOnlyHint": "只显示已归档的会话；再点一次回到全部",
+    "palette.unarchive": "取消归档",
+    "palette.unarchived": "已恢复这个会话",
+    "palette.unarchiveFailed": "恢复失败",
+    "palette.unarchiveUnavailable": "当前 DSH 客户端没有提供恢复归档接口。",
     "settings.paletteArchived": "搜索时包含已归档会话",
     "settings.paletteArchivedDesc": "默认包含；关掉后搜索列表只显示未归档会话",
     "settings.title": "项目看板设置",
@@ -2506,7 +2526,9 @@
     down: ["M6 9l6 6 6-6"],
     bottom: ["M12 4v12", "M7 11l5 5 5-5", "M5 20h14"],
     left: ["M19 12H5", "M11 6l-6 6 6 6"],
-    archive: ["M12 4.5v7.5", "M8.4 9L12 12.6 15.6 9", "M4.5 13v4.5A2 2 0 0 0 6.5 19.5h11a2 2 0 0 0 2-2V13"]
+    archive: ["M12 4.5v7.5", "M8.4 9L12 12.6 15.6 9", "M4.5 13v4.5A2 2 0 0 0 6.5 19.5h11a2 2 0 0 0 2-2V13"],
+    /* The archive glyph with the arrow reversed: a box with content coming back out. */
+    unarchive: ["M12 12.6V5.1", "M8.4 8.7L12 5.1 15.6 8.7", "M4.5 13v4.5A2 2 0 0 0 6.5 19.5h11a2 2 0 0 0 2-2V13"]
   };
   var NATIVE_ICONS = {
     sliders: {
@@ -4280,6 +4302,7 @@
     const [query, setQuery] = useState("");
     const [index, setIndex] = useState(0);
     const [scope, setScope] = useState(null);
+    const [archivedOnly, setArchivedOnly] = useState(false);
     const [mounted, setMounted] = useState(false);
     const [closing, setClosing] = useState(false);
     const inputRef = useRef(null);
@@ -4315,7 +4338,7 @@
       const row = byId[id];
       if (!row || row.blank || row.origin === "subagent") continue;
       const isArchived = archived.has(id);
-      if (isArchived && !includeArchived) continue;
+      if (isArchived && !includeArchived && !archivedOnly) continue;
       const workspace = wsBySession.get(id);
       const spec = workspace ? projectSpec(workspace.workspaceId) : { color: paletteFor(""), icon: "folder" };
       const info = statusInfo(statuses ? statuses.get(id) : void 0, row);
@@ -4350,7 +4373,9 @@
     const orderedRows = hudIds.map((id) => rowById.get(id)).filter(Boolean);
     cycleRef.current = { active: orderedRows.length > 0 ? orderedRows : cycleRows, current: currentId };
     const q = query.trim().toLowerCase();
-    const visibleSessions = rows.filter((row) => (!scope || row.projectId === scope) && (!q || row.title.toLowerCase().includes(q) || row.project.toLowerCase().includes(q))).sort((a, b) => {
+    const visibleSessions = rows.filter(
+      (row) => (!archivedOnly || row.archived) && (!scope || row.projectId === scope) && (!q || row.title.toLowerCase().includes(q) || row.project.toLowerCase().includes(q))
+    ).sort((a, b) => {
       const diff = toneRank(a) - toneRank(b);
       return diff !== 0 ? diff : b.updatedAt - a.updatedAt;
     });
@@ -4365,6 +4390,27 @@
       ...pluginSettings.map((entry) => ({ kind: "setting", entry })),
       ...visibleSessions.map((row) => ({ kind: "session", row }))
     ];
+    const unarchive = async (row) => {
+      const call = props.unarchiveSession;
+      if (typeof call !== "function") {
+        if (typeof props.notify === "function") {
+          props.notify({ tone: "warn", title: t("palette.archived"), message: t("palette.unarchiveUnavailable") });
+        }
+        return;
+      }
+      let result = null;
+      try {
+        result = await call(row.id);
+      } catch (error) {
+        result = { ok: false, error: { message: String(error && error.message || error) } };
+      }
+      if (typeof props.notify !== "function") return;
+      const ok = !result || result.ok !== false;
+      const reason = result?.error?.message;
+      props.notify(
+        ok ? { tone: "success", title: t("palette.archived"), message: t("palette.unarchived") } : { tone: "warn", title: t("palette.archived"), message: reason || t("palette.unarchiveFailed") }
+      );
+    };
     useEffect(() => {
       if (!mounted || !state.open || !inputRef.current) return;
       inputRef.current.focus({ preventScroll: true });
@@ -4697,8 +4743,10 @@
       } else if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();
-        if (scope) setScope(null);
-        else close();
+        if (scope || archivedOnly) {
+          setScope(null);
+          setArchivedOnly(false);
+        } else close();
       }
     };
     const groupLabel = (item) => {
@@ -4760,6 +4808,27 @@
             row.info.tone === "running" ? h(RunRing, { size: 9 }) : h("span", { className: "pbx-rdot", "data-tone": row.info.tone }),
             h("span", { className: "pbx-prowTitle" }, row.title),
             row.archived ? h("span", { className: "pbx-prowArchived" }, t("palette.archived")) : null,
+            row.archived ? h(
+              "span",
+              {
+                className: "pbx-prowUnarchive",
+                role: "button",
+                tabIndex: -1,
+                title: t("palette.unarchive"),
+                "aria-label": t("palette.unarchive"),
+                /* The row itself opens the session, so restoring has to stop the click before it
+                   reaches the row handler. */
+                onClick: (event) => {
+                  event.stopPropagation();
+                  event.preventDefault();
+                  void unarchive(row);
+                },
+                onKeyDown: (event) => {
+                  event.stopPropagation();
+                }
+              },
+              h(Icon, { name: "unarchive", size: 13 })
+            ) : null,
             h(
               "span",
               { className: "pbx-prowMeta" },
@@ -4819,8 +4888,10 @@
             }
             if (event.key !== "Escape") return;
             event.preventDefault();
-            if (scope) setScope(null);
-            else close();
+            if (scope || archivedOnly) {
+              setScope(null);
+              setArchivedOnly(false);
+            } else close();
           }
         },
         h(
@@ -4851,6 +4922,20 @@
               }
             },
             t("palette.allProjects")
+          ),
+          h(
+            "button",
+            {
+              type: "button",
+              className: "pbx-pchip archived" + (archivedOnly ? " on" : ""),
+              title: t("palette.archivedOnlyHint"),
+              onClick: () => {
+                setArchivedOnly(!archivedOnly);
+                if (inputRef.current) inputRef.current.focus();
+              }
+            },
+            h("span", { className: "pbx-pchipIcon" }, h(Icon, { name: "archive", size: 12 })),
+            t("palette.archivedOnly")
           ),
           projects.map(
             (project) => h(
@@ -6774,7 +6859,10 @@
   }
   function ToastStack(props) {
     const { t, dismissToast } = props;
-    const snap = useStoreSnapshot(props.toasts, EMPTY_TOASTS);
+    const useToasts = typeof props.useToasts === "function" ? props.useToasts : fallbackHook();
+    const hookSnap = useToasts((value) => value);
+    const storeSnap = useStoreSnapshot(props.toasts, EMPTY_TOASTS);
+    const snap = (hookSnap && hookSnap.items && hookSnap.items.length > 0 ? hookSnap : null) || storeSnap;
     const items = snap && snap.items || [];
     if (items.length === 0) return null;
     return h(
@@ -7675,6 +7763,19 @@
         return { ok: false, error: { code: rpc && rpc.code ? rpc.code : "", message: String(error && error.message || error) } };
       }
     };
+    const unarchiveSession = async (sessionId) => {
+      try {
+        const workspaces = optionalService(ctx, "workspaces");
+        if (!workspaces || typeof workspaces.unarchiveSession !== "function") {
+          return { ok: false, error: { code: "unsupported", message: "session unarchive is unavailable" } };
+        }
+        await workspaces.unarchiveSession(sessionId);
+        return { ok: true };
+      } catch (error) {
+        const rpc = error?.rpcError;
+        return { ok: false, error: { code: rpc && rpc.code ? rpc.code : "", message: String(error && error.message || error) } };
+      }
+    };
     const sessionDeleteApi = () => {
       const owns = (object, name) => {
         try {
@@ -7939,6 +8040,7 @@
             toggleHud,
             requestRename,
             requestSessionMenu,
+            unarchiveSession,
             notify: pushToast,
             chooseSetting,
             hooks: { palette: paletteStore, settings: settingsStore, settingsCatalog: settingsCatalogStore, focus: focusStore, hudOrder: hudOrderStore }
@@ -7997,7 +8099,7 @@
     ctx.slots.inject(
       "shell.overlay",
       () => ctx.slots.register(
-        { name: "shell.overlay", id: "project-board-toast", order: 45, locale: NS, inject: () => ({ dismissToast, toasts: toastStore }) },
+        { name: "shell.overlay", id: "project-board-toast", order: 45, locale: NS, inject: () => ({ dismissToast, toasts: toastStore, hooks: { toasts: toastStore } }) },
         ToastStack
       )
     );
