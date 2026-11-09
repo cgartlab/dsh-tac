@@ -1,6 +1,7 @@
 /**
- * The command palette: fuzzy session search with project chips, and the plugin's global
- * keyboard dispatcher (a single capture-phase listener that owns every configured combo).
+ * The command palette: fuzzy session search with project chips, settings search, and the
+ * plugin's global keyboard dispatcher (a single capture-phase listener that owns every
+ * configured combo).
  */
 import { DEFAULT_SETTINGS } from '../constants';
 import type { Translate, UseHook } from '../host';
@@ -11,6 +12,8 @@ import { hasBlockingDialog } from '../core/dom';
 import { logEvent } from '../core/log';
 import { fallbackHook } from '../core/schedule';
 import { shortcutState } from '../core/state';
+import { EMPTY_CATALOG } from '../core/settings-catalog';
+import type { SettingEntry, SettingsCatalogSnapshot } from '../core/settings-catalog';
 import { hexToRgba, loadAppearance, paletteFor } from '../ui/appearance';
 import { Icon, RunRing } from '../ui/icons';
 import { beginHoldScroll, stopHoldScroll } from './chat-scroll';
@@ -20,7 +23,12 @@ import type { PaletteSnapshot, PaletteStore } from './header';
 import type { SessionListSnapshot, SessionStatusMap, WorkspaceSnapshot } from '../core/snapshot';
 
 /** Native keydown events carrying the plugin's own "this press was handled" marker. */
-type PluginKeyEvent = KeyboardEvent & { pbxSidebarActed?: boolean; pbxBoardActed?: boolean };
+type PluginKeyEvent = KeyboardEvent & {
+  pbxSidebarActed?: boolean;
+  pbxBoardActed?: boolean;
+  pbxPaletteActed?: boolean;
+  pbxHudActed?: boolean;
+};
 
 export interface FocusStore {
   set(patch: { id?: string | null; at?: number }): void;
@@ -42,16 +50,23 @@ interface PaletteRow {
   archived: boolean;
 }
 
+/** A single selectable result. Settings and sessions share one index so arrow keys cross groups. */
+type PaletteItem =
+  | { kind: 'session'; row: PaletteRow }
+  | { kind: 'setting'; entry: SettingEntry };
+
 export interface PaletteProps {
   useSessions: UseHook<SessionListSnapshot>;
   useSessionStatus: UseHook<SessionStatusMap>;
   useWorkspaces: UseHook<WorkspaceSnapshot>;
   usePalette?: UseHook<PaletteSnapshot>;
   useSettings?: UseHook<Settings>;
+  useSettingsCatalog?: UseHook<SettingsCatalogSnapshot>;
   useHudOrder?: UseHook<{ ids: string[] }>;
   palette?: PaletteStore;
   focus?: FocusStore;
   openSession?: (id: string) => void;
+  chooseSetting?: (entry: SettingEntry) => boolean;
   toggleBoard?: (mode: string) => void;
   toggleLeftSidebar?: () => boolean;
   toggleHud?: () => void;
@@ -66,8 +81,10 @@ export function Palette(props: PaletteProps): unknown {
   const usePalette = typeof props.usePalette === 'function' ? props.usePalette : fallbackHook<PaletteSnapshot>();
   const useSettings = typeof props.useSettings === 'function' ? props.useSettings : fallbackHook<Settings>();
   const useHudOrder = typeof props.useHudOrder === 'function' ? props.useHudOrder : fallbackHook<{ ids: string[] }>();
+  const useSettingsCatalog = typeof props.useSettingsCatalog === 'function' ? props.useSettingsCatalog : fallbackHook<SettingsCatalogSnapshot>();
   const palette = props.palette;
   const config = useSettings((snapshot) => snapshot) || DEFAULT_SETTINGS;
+  const catalog = useSettingsCatalog((snapshot) => snapshot) || EMPTY_CATALOG;
   const hudOrderSnap = useHudOrder((snapshot) => snapshot) || { ids: [] };
   const settingsRef = useRef(config);
   settingsRef.current = config;
@@ -87,9 +104,11 @@ export function Palette(props: PaletteProps): unknown {
   const listRef = useRef<HTMLElement | null>(null);
   const paletteOpenerRef = useRef<HTMLElement | null>(null);
   const openRef = useRef(props.openSession);
+  const chooseSettingRef = useRef(props.chooseSetting);
   const paletteOpenRef = useRef(false);
   const renameRef = useRef<{ id: string; title: string } | null>(null);
   openRef.current = props.openSession;
+  chooseSettingRef.current = props.chooseSetting;
   paletteOpenRef.current = state.open;
 
   const archived = new Set((wsSnap && wsSnap.archivedSessionIds) || []);
@@ -155,12 +174,27 @@ export function Palette(props: PaletteProps): unknown {
   cycleRef.current = { active: orderedRows.length > 0 ? orderedRows : cycleRows, current: currentId };
 
   const q = query.trim().toLowerCase();
-  const visible = rows
+  const visibleSessions = rows
     .filter((row) => (!scope || row.projectId === scope) && (!q || row.title.toLowerCase().includes(q) || row.project.toLowerCase().includes(q)))
     .sort((a, b) => {
       const diff = toneRank(a) - toneRank(b);
       return diff !== 0 ? diff : b.updatedAt - a.updatedAt;
     });
+  /* Settings only join the results once the reader types: opening Alt+K still shows the
+     familiar session list. Settings sit above sessions under their own group headers, so
+     the two kinds never blur together. `scope` is a project filter and applies to sessions
+     only — settings are global. */
+  const matchesSetting = (entry: SettingEntry): boolean => {
+    if (!q) return false;
+    return entry.title.toLowerCase().includes(q) || entry.keywords.includes(q);
+  };
+  const hostSettings = (catalog.host || []).filter(matchesSetting);
+  const pluginSettings = (catalog.plugin || []).filter(matchesSetting);
+  const items: PaletteItem[] = [
+    ...hostSettings.map((entry) => ({ kind: 'setting' as const, entry: entry })),
+    ...pluginSettings.map((entry) => ({ kind: 'setting' as const, entry: entry })),
+    ...visibleSessions.map((row) => ({ kind: 'session' as const, row: row }))
+  ];
 
   useEffect(() => {
     if (!mounted || !state.open || !inputRef.current) return;
@@ -217,7 +251,7 @@ export function Palette(props: PaletteProps): unknown {
     const move = state.move;
     if (!state.open || !move || !move.at) return;
     setIndex((previous) => {
-      const max = Math.max(0, visible.length - 1);
+      const max = Math.max(0, items.length - 1);
       return Math.min(max, Math.max(0, previous + move.dir));
     });
   }, [state.move && state.move.at, state.open]);
@@ -287,6 +321,18 @@ export function Palette(props: PaletteProps): unknown {
         event.preventDefault();
         event.stopPropagation();
         stopHoldScroll(false);
+        /* A second live listener (a leaked instance after a client-plugin hot reload) would
+           toggle the same panel twice and cancel itself out. Every toggle-type shortcut needs
+           this handshake, not just the ones that change the host layout. */
+        if (event.pbxPaletteActed === true) {
+          logEvent('info', 'shortcut', 'palette:duplicate', {});
+          return;
+        }
+        try {
+          event.pbxPaletteActed = true;
+        } catch (error) {
+          /* frozen event */
+        }
         if (settingsRef.current.palette.enabled !== false && palette) palette.toggle('open');
         return;
       }
@@ -383,6 +429,17 @@ export function Palette(props: PaletteProps): unknown {
         event.preventDefault();
         event.stopPropagation();
         stopHoldScroll(false);
+        /* Same duplicate-listener handshake as the palette and the layout toggles: two runs of
+           this branch would collapse the HUD and expand it again on one keypress. */
+        if (event.pbxHudActed === true) {
+          logEvent('info', 'shortcut', 'hud:duplicate', {});
+          return;
+        }
+        try {
+          event.pbxHudActed = true;
+        } catch (error) {
+          /* frozen event */
+        }
         if (typeof props.toggleHud === 'function') props.toggleHud();
         return;
       }
@@ -458,10 +515,16 @@ export function Palette(props: PaletteProps): unknown {
   const close = (): void => {
     if (palette) palette.set({ open: false });
   };
-  const choose = (row: PaletteRow | undefined): void => {
-    if (!row) return;
-    logEvent('debug', 'palette', 'choose', { id: String(row.id || '').slice(-12) });
+  const choose = (item: PaletteItem | undefined): void => {
+    if (!item) return;
     close();
+    if (item.kind === 'setting') {
+      logEvent('info', 'palette', 'setting', { id: item.entry.id, origin: item.entry.origin });
+      if (typeof chooseSettingRef.current === 'function') chooseSettingRef.current(item.entry);
+      return;
+    }
+    const row = item.row;
+    logEvent('debug', 'palette', 'choose', { id: String(row.id || '').slice(-12) });
     if (focusRef.current) focusRef.current.set({ id: row.id, at: Date.now() });
     if (typeof openSession === 'function') openSession(row.id);
   };
@@ -470,13 +533,13 @@ export function Palette(props: PaletteProps): unknown {
     if (isComposingEvent(event as KeyEventLike)) return;
     if (event.key === 'ArrowDown') {
       event.preventDefault();
-      setIndex((value) => Math.min(value + 1, Math.max(0, visible.length - 1)));
+      setIndex((value) => Math.min(value + 1, Math.max(0, items.length - 1)));
     } else if (event.key === 'ArrowUp') {
       event.preventDefault();
       setIndex((value) => Math.max(0, value - 1));
     } else if (event.key === 'Enter') {
       event.preventDefault();
-      if (visible.length > 0) choose(visible[Math.min(index, visible.length - 1)]);
+      if (items.length > 0) choose(items[Math.min(index, items.length - 1)]);
     } else if (event.key === 'Escape') {
       event.preventDefault();
       event.stopPropagation();
@@ -484,6 +547,81 @@ export function Palette(props: PaletteProps): unknown {
       else close();
     }
   };
+
+  const groupLabel = (item: PaletteItem): string => {
+    if (item.kind === 'session') return t('palette.group.sessions');
+    return item.entry.origin === 'host' ? t('palette.group.hostSettings') : t('palette.group.pluginSettings');
+  };
+  const rendered: unknown[] = [];
+  let lastGroup = '';
+  items.forEach((item, i) => {
+    const group = groupLabel(item);
+    if (group !== lastGroup) {
+      lastGroup = group;
+      rendered.push(
+        h(
+          'div',
+          { key: 'group-' + i, className: 'pbx-paletteGroup', role: 'presentation' },
+          h('span', { className: 'pbx-paletteGroupLabel' }, group)
+        )
+      );
+    }
+    const active = i === index;
+    if (item.kind === 'setting') {
+      const entry = item.entry;
+      rendered.push(
+        h(
+          'button',
+          {
+            key: entry.id,
+            type: 'button',
+            role: 'option',
+            'aria-selected': active ? 'true' : 'false',
+            className: 'pbx-prow pbx-prowSetting' + (active ? ' active' : ''),
+            onMouseEnter: () => setIndex(i),
+            onClick: () => choose(item)
+          },
+          h(
+            'span',
+            { className: 'pbx-prowSettingIcon', 'data-origin': entry.origin },
+            h(Icon, { name: entry.origin === 'host' ? 'sliders' : 'board', size: 13 })
+          ),
+          h('span', { className: 'pbx-prowTitle' }, entry.title),
+          h('span', { className: 'pbx-prowMeta' }, t('palette.setting.open'))
+        )
+      );
+    } else {
+      const row = item.row;
+      rendered.push(
+        h(
+          'button',
+          {
+            key: row.id,
+            type: 'button',
+            role: 'option',
+            'aria-selected': active ? 'true' : 'false',
+            className: 'pbx-prow' + (active ? ' active' : '') + (row.archived ? ' archived' : ''),
+            onMouseEnter: () => setIndex(i),
+            onClick: () => choose(item)
+          },
+          row.info.tone === 'running' ? h(RunRing, { size: 9 }) : h('span', { className: 'pbx-rdot', 'data-tone': row.info.tone }),
+          h('span', { className: 'pbx-prowTitle' }, row.title),
+          row.archived ? h('span', { className: 'pbx-prowArchived' }, t('palette.archived')) : null,
+          h(
+            'span',
+            { className: 'pbx-prowMeta' },
+            h(
+              'span',
+              { className: 'pbx-prowWsIcon', style: { color: row.projectColor, background: hexToRgba(row.projectColor, 0.16) } },
+              h(Icon, { name: row.projectIcon, size: 10 })
+            ),
+            row.project
+          ),
+          h('span', { className: 'pbx-prowTime' }, relTime(row.updatedAt, t))
+        )
+      );
+    }
+  });
 
   const blur = Math.min(32, Math.max(6, Number(config.palette.blur) || 15));
   const backdropStyle = {
@@ -586,36 +724,9 @@ export function Palette(props: PaletteProps): unknown {
       h(
         'div',
         { className: 'pbx-paletteList', ref: listRef },
-        visible.length === 0
+        items.length === 0
           ? h('div', { className: 'pbx-paletteEmpty' }, t('palette.empty'))
-          : visible.map((row, i) =>
-              h(
-                'button',
-                {
-                  key: row.id,
-                  type: 'button',
-                  role: 'option',
-                  'aria-selected': i === index ? 'true' : 'false',
-                  className: 'pbx-prow' + (i === index ? ' active' : '') + (row.archived ? ' archived' : ''),
-                  onMouseEnter: () => setIndex(i),
-                  onClick: () => choose(row)
-                },
-                row.info.tone === 'running' ? h(RunRing, { size: 9 }) : h('span', { className: 'pbx-rdot', 'data-tone': row.info.tone }),
-                h('span', { className: 'pbx-prowTitle' }, row.title),
-                row.archived ? h('span', { className: 'pbx-prowArchived' }, t('palette.archived')) : null,
-                h(
-                  'span',
-                  { className: 'pbx-prowMeta' },
-                  h(
-                    'span',
-                    { className: 'pbx-prowWsIcon', style: { color: row.projectColor, background: hexToRgba(row.projectColor, 0.16) } },
-                    h(Icon, { name: row.projectIcon, size: 10 })
-                  ),
-                  row.project
-                ),
-                h('span', { className: 'pbx-prowTime' }, relTime(row.updatedAt, t))
-              )
-            )
+          : rendered
       ),
       h('div', { className: 'pbx-paletteFoot' }, t('palette.hint', {
         prev: comboDisplay(config.shortcuts.prev),

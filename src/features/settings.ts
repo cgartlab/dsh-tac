@@ -1,5 +1,5 @@
 /** The plugin's settings page: shortcut recording, header buttons, behaviour, logs and data. */
-import { DEFAULT_SETTINGS, HUD_COLLAPSE_KEY, HUD_POS_KEY, HUD_STARTS_KEY, LOG_KEY, SHORTCUT_LABEL_KEYS, STORE_KEY } from '../constants';
+import { BOARD_WIDTH_KEY, DEFAULT_SETTINGS, HUD_COLLAPSE_KEY, HUD_POS_KEY, HUD_STARTS_KEY, LOG_KEY, SHORTCUT_LABEL_KEYS, STORE_KEY } from '../constants';
 import type { Translate, UseHook } from '../host';
 import { comboDisplay, comboFromEvent, comboHasModifier, isComposingEvent, MODIFIER_LABELS } from '../core/combos';
 import { cloneJson } from '../core/json';
@@ -23,6 +23,8 @@ export interface SettingsPageProps {
   useShortcutsCatalog?: UseHook<unknown>;
   /** Host slot hook; when present the GitHub section lists real workspaces to map. */
   useWorkspaces?: UseHook<WorkspaceSnapshot>;
+  /** Palette -> settings deep link: which section to reveal and highlight. */
+  useSettingsTarget?: UseHook<{ key: string | null; at: number }>;
   t: Translate;
 }
 
@@ -56,6 +58,47 @@ export function SettingsPage(props: SettingsPageProps): unknown {
   const ghWorkspaces = ((wsSnap && wsSnap.items) || []).filter((item) => item && item.path);
   const [ghTesting, setGhTesting] = useState(false);
   const [ghTest, setGhTest] = useState<{ ok: boolean; text: string } | null>(null);
+  /* Deep link from the command palette: open this settings section and briefly highlight
+     the matching block. Anchors map to the same dictionary keys the section headings use,
+     so matching the rendered text works in either locale without extra DOM markers.
+     The timer is owned by this effect's cleanup, so unloading mid-highlight cannot leave a
+     stray timeout writing into a page that no longer hosts the plugin. */
+  const useSettingsTarget = typeof props.useSettingsTarget === 'function'
+    ? props.useSettingsTarget
+    : fallbackHook<{ key: string | null; at: number }>();
+  const settingsTarget = useSettingsTarget((snapshot) => snapshot) || { key: null, at: 0 };
+  const ANCHOR_LABEL_KEYS: Record<string, string> = {
+    shortcuts: 'settings.shortcuts',
+    headerButtons: 'settings.headerButtons',
+    behavior: 'settings.behavior',
+    github: 'settings.githubTitle',
+    logging: 'settings.logging',
+    data: 'settings.data'
+  };
+  useEffect(() => {
+    const key = settingsTarget.key;
+    if (!key || !settingsTarget.at || !ANCHOR_LABEL_KEYS[key]) return undefined;
+    let raf = 0;
+    let timer = 0;
+    const reveal = (): void => {
+      const wanted = t(ANCHOR_LABEL_KEYS[key]).trim();
+      const heads = document.querySelectorAll('.pbx-setSectionTitle');
+      for (const head of Array.prototype.slice.call(heads) as HTMLElement[]) {
+        if ((head.textContent || '').trim() !== wanted) continue;
+        const section = head.closest('.pbx-setSection') as HTMLElement | null;
+        if (!section) continue;
+        if (typeof section.scrollIntoView === 'function') section.scrollIntoView({ block: 'center' });
+        section.classList.add('pbx-setHighlight');
+        timer = window.setTimeout(() => section.classList.remove('pbx-setHighlight'), 2200);
+        break;
+      }
+    };
+    raf = window.requestAnimationFrame(reveal);
+    return () => {
+      if (raf) window.cancelAnimationFrame(raf);
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [settingsTarget.key, settingsTarget.at]);
 
   useEffect(() => {
     if (!recording) return undefined;
@@ -148,6 +191,15 @@ export function SettingsPage(props: SettingsPageProps): unknown {
     const fallback = (DEFAULT_SETTINGS as unknown as Record<string, unknown>)[section];
     return fallback && typeof fallback === 'object' ? (fallback as Record<string, unknown>) : {};
   };
+  /* A stored value can be corrupt or from a hand-edited config: Number('abc') is NaN, and
+     rendering NaN into a number input shows the literal text "NaN". Coerce into the legal
+     range, falling back to the shipped default so the field still communicates something. */
+  const numberIn = (section: SettingsSection, key: string, min: number, max: number): number => {
+    const raw = Number(readSection(section)[key]);
+    if (Number.isFinite(raw)) return Math.min(max, Math.max(min, raw));
+    const shipped = Number(((DEFAULT_SETTINGS as unknown as Record<string, unknown>)[section] as Record<string, unknown> | undefined)?.[key]);
+    return Number.isFinite(shipped) ? Math.min(max, Math.max(min, shipped)) : min;
+  };
   const update = (section: SettingsSection, patch: Record<string, unknown>): void => {
     const next = cloneJson(config);
     const current = (next as unknown as Record<string, unknown>)[section];
@@ -162,6 +214,7 @@ export function SettingsPage(props: SettingsPageProps): unknown {
       window.localStorage.removeItem(HUD_COLLAPSE_KEY);
       window.localStorage.removeItem(HUD_POS_KEY);
       window.localStorage.removeItem(HUD_STARTS_KEY);
+      window.localStorage.removeItem(BOARD_WIDTH_KEY);
       window.dispatchEvent(new Event('pbx-hud-reset'));
     } catch (error) {
       /* ignore */
@@ -394,8 +447,7 @@ export function SettingsPage(props: SettingsPageProps): unknown {
     );
   };
   const numberRow = (section: SettingsSection, key: string, labelKey: string, min: number, max: number, step: number): unknown => {
-    const values = readSection(section);
-    const value = Number(values[key]);
+    const value = numberIn(section, key, min, max);
     return row(
       section + '-' + key,
       labelKey,
@@ -432,8 +484,7 @@ export function SettingsPage(props: SettingsPageProps): unknown {
     );
   };
   const rangeRow = (section: SettingsSection, key: string, labelKey: string, min: number, max: number, step: number): unknown => {
-    const values = readSection(section);
-    const value = Number(values[key]);
+    const value = numberIn(section, key, min, max);
     return row(
       section + '-' + key,
       labelKey,

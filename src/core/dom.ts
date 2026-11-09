@@ -227,6 +227,32 @@ export function pointerViewX(event: PointerLike): number {
   return screenX - window.screenX;
 }
 
+/**
+ * Last-resort "open Settings" action: click the host's own sidebar Settings control.
+ *
+ * The settings shell publishes `openSection` through its `sidebar.settings` slot store, and
+ * `core/settings-catalog.ts` uses that first. This probe is only for hosts where the ledger
+ * does not expose the store. It deliberately keys off the accessible name and dialog hint
+ * rather than hashed CSS classes, and returns false (never throws) when no control matches,
+ * so an unknown host build simply loses the fallback.
+ */
+export function clickHostSettingsTrigger(): boolean {
+  try {
+    const nodes = Array.prototype.slice.call(
+      document.querySelectorAll('button[aria-haspopup="dialog"]')
+    ) as HTMLElement[];
+    const hit = nodes.find((node) => {
+      const label = ((node.getAttribute('aria-label') || node.textContent || '') + '').trim();
+      return /设置|偏好|设定|settings|preferences/i.test(label);
+    });
+    if (!hit) return false;
+    hit.click();
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
 export interface DropPosition {
   side: 'left' | 'right';
   index: number;

@@ -13,6 +13,9 @@ import type { SessionListSnapshot } from '../core/snapshot';
 export interface BoardState {
   open: boolean;
   mode: string | null;
+  /** Measured pane width at capture time. The mode bucket cannot express "wider than half but
+   *  not fullscreen", so a restore uses this exact value when it is present. */
+  width?: number;
 }
 
 export interface BoardSessionGuardProps {

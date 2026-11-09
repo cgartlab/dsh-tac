@@ -27,8 +27,20 @@ reading, and desktop-class task notifications.
   active sessions first, most recent activity first within a group; switching sessions
   highlights the new row without reshuffling the list, and `⌥+I` / `⌥+,` cycle in
   exactly that order.
-- **Search palette** — fuzzy session search, project scoping, keyboard navigation and
-  jump-to-session.
+- **Command palette** (`⌥+K`) — fuzzy search over sessions and projects, and now over
+  settings too (the input prompts for "sessions, projects or settings"). With a keyword,
+  results are split into three labelled groups: **Settings** (the host's own settings
+  sections, discovered live), **Project Board settings** (the six sections of this plugin's
+  settings page — Shortcuts, Top function buttons, Interface and behavior, GitHub data
+  source, Logs & diagnostics, Data) and **Sessions** (the original results). Setting rows
+  carry their own icon and group headers, and `⌥+I` / `⌥+,` / `↑` / `↓` move continuously
+  across all groups; `Enter` opens the session or jumps to the setting. An empty query still
+  shows only the familiar session list, and the project filter chips narrow sessions only —
+  settings are global. Selecting a setting opens the host Settings page at that section;
+  plugin settings also scroll to their section and briefly highlight it. If Settings opens
+  but the section cannot be preselected, an info toast says so; if it cannot be opened at
+  all, a warn toast points you to the sidebar — a partial success is never silent. Sections
+  the host or other plugins add later appear in search without a plugin update.
 - **Hold-to-scroll reading** — the conversation scrolls smoothly while the key is held,
   loads older history automatically before reaching the boundary, and falls back to anchor
   stepping if the chat view reverts a position write. Holding `⌥+M` down to the end
@@ -57,7 +69,7 @@ physical Option key. On Windows and Linux the same combinations are shown as `Al
 
 | Shortcut | Action |
 | --- | --- |
-| `⌥+K` | Open / close session search — inside, `⌥+I` / `⌥+,` / `↑` / `↓` move the selection, `Enter` opens it |
+| `⌥+K` | Open / close the command palette (sessions, projects and settings) — inside, `⌥+I` / `⌥+,` / `↑` / `↓` move the selection across all groups, `Enter` opens the session or jumps to the setting |
 | `⌥+I` / `⌥+,` | Previous / next session |
 | `⌥+U` / `⌥+M` | Previous / next user instruction (tap to jump, hold to scroll) |
 | `⌥+S` | Scroll to bottom and focus the composer |
@@ -98,7 +110,7 @@ runtime dependencies of its own; host-half `index.js` is intentionally a no-op.
 - `src/index.ts` — entry the harness injects; binds the host React and calls `apply`
 - `src/apply.ts` — dictionaries, styles, stores, native board/sidebar actions, slot wiring
 - `src/features/` — board, floating list, palette + shortcut dispatcher, notifications, dialogs, settings page, chat scrolling
-- `src/core/` — settings/migration, logging, combos, stores, DOM probes, schedule + preset sources
+- `src/core/` — settings/migration, logging, combos, stores, DOM probes, schedule + preset sources, palette settings catalog
 - `src/i18n/` — zh/en dictionaries (key parity is a compile-time error)
 - `client.js`, `index.js` — generated artifacts (never edit by hand)
 - `cordis.patch.yml` — bundle insertion

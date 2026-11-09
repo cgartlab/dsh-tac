@@ -18,7 +18,7 @@ by `scripts/build.mjs` (esbuild) and must not be edited by hand.
 | `src/host.ts` | typed host contract (`HostContext` and the services it exposes) |
 | `src/constants.ts` | plugin id, storage keys, default settings |
 | `src/types.ts` | domain types (settings, log entries, stores) |
-| `src/core/` | settings + migration, logging, combos, stores, host DOM probes (`dom.ts`), host snapshot shapes (`snapshot.ts`), schedule/preset sources, GitHub data source |
+| `src/core/` | settings + migration, logging, combos, stores, host DOM probes (`dom.ts`), host snapshot shapes (`snapshot.ts`), schedule/preset sources, GitHub data source, palette settings catalog (`settings-catalog.ts`) |
 | `src/i18n/` | zh/en dictionaries; `en` is typed against `zh` so parity is a compile error |
 | `src/styles.ts` | every CSS rule, injected once into a `<style>` tag |
 | `src/ui/` | icon geometry/components, project appearance helpers |
@@ -49,7 +49,8 @@ dictionaries, styles and slot registrations.
 | `conversation.session.header.utilities` | board shortcut buttons next to the session header |
 | `conversation.composer.dock` | shortcut hint bar and composer-side buttons |
 | `shell.overlay` | palette, rename dialog, session actions, HUD, toasts, notification dock |
-| `settings.section` | 项目看板设置 settings page |
+| `settings.section` | registers the plugin's 项目看板设置 page; its public ledger also feeds the palette's host-settings index |
+| `sidebar.settings` | read-only: its published shell store opens Settings at a section (`openSection`) |
 
 ## State
 
@@ -105,6 +106,82 @@ window-control strip, following DSH's `--dsh-frame-top-clearance` (48px on macOS
 20px in fullscreen, where the host sets `data-fullscreen`). Toasts, the search palette and
 the rename dialog follow the clearance fully; the floating HUD keeps its 120px design
 position and only follows a larger clearance, so the layout does not jump.
+
+## Settings search in the command palette
+
+The command palette (`Alt+K`) still defaults to sessions, but typing now also searches
+settings. Three result groups share one list, in this order: **Settings** (host-owned
+sections), **Project Board settings** (the plugin's own six sections), **Sessions** (the
+original rows). Group headers (`palette.group.*`) and a distinct row icon (`sliders` for
+host, `board` for plugin) keep settings apart from sessions; all colours come from
+`--dsw-alias-*` tokens (`.pbx-paletteGroup`, `.pbx-paletteGroupLabel`,
+`.pbx-prowSettingIcon[data-origin]`, `.pbx-setSection.pbx-setHighlight`).
+
+### Where the index comes from
+
+`src/core/settings-catalog.ts` builds a `SettingsCatalogSnapshot` (`host` + `plugin`
+entries) kept in a `createUiStore` in `apply.ts`. Host entries are **enumerated, not
+hard-coded**: `ctx.slots.entries('settings.section')` returns the public slot ledger's
+registration options, from which we read `id` / `order` / `label` (a locale-following thunk
+or a string). `apply.ts` subscribes with
+`ctx.slots.subscribe('settings.section', refresh)`, so a section contributed later by the
+host or another plugin appears in search **without a dsh-tac release**. The plugin's own
+section id (`project-board-settings`) is excluded from the host group; its six sub-sections
+are a small static index (`PLUGIN_DEFS`) because they all live inside that one page —
+Shortcuts / Top function buttons / Interface and behavior / GitHub data source / Logs &
+diagnostics / Data — each with an `anchor` and zh+en `keywords`. Keywords are internal index
+data and never rendered. Only public surfaces are read: no host-internal shape is assumed,
+and the probe is `try/catch`-guarded and falls back to an empty list.
+
+### Opening and locating a section
+
+Choosing a setting calls `chooseSetting` (`apply.ts`) → `openSettingsTarget`, and in the
+same step writes `settingsTargetStore`. The open path is a four-level degradation chain,
+each step probed before use:
+
+1. `sidebar.settings` publishes its shell store; `store.create().actions.openSection(id)`
+   opens Settings **and** selects the section (`section`).
+2. `actions.open()` still opens Settings, without selecting a section (`settings`).
+3. `clickHostSettingsTrigger()` (`core/dom.ts`) clicks the host's own sidebar Settings
+   control, matched by `button[aria-haspopup="dialog"]` plus its accessible name rather
+   than hashed CSS classes (`dom`).
+4. All three fail → `failed`, a **warn** toast `toast.settingsOpenFailed` ("use the
+   sidebar"). The two middle results (`settings` / `dom`) are **partial successes** —
+   Settings is open but no section was preselected — and raise an **info** toast
+   `toast.settingsOpenPartial` ("Settings opened, but the section could not be selected
+   automatically"). `section` is the only result with no toast, so a degraded open is never
+   silent.
+
+The result is logged (`settings` / `open-from-palette`) so a degraded path is visible in
+Logs & diagnostics. For plugin entries, `settingsTargetStore` also drives the settings
+page: it matches the localized `.pbx-setSectionTitle` text, scrolls that `.pbx-setSection`
+into view and adds `.pbx-setHighlight` for 2.2 s. Host entries carry no anchor, so they stop
+at the selected host section.
+
+### Rendering and one shared keyboard index
+
+`PaletteItem` is a union of `session` and `setting`, flattened into a single `items[]`
+array (host settings → plugin settings → sessions). One `index` covers the whole array, so
+`↑` / `↓` / `Enter` (and `Alt+I` / `Alt+,` through `state.move`) cross group boundaries
+continuously and clamp to `items.length - 1`; there is no per-group cursor. Group headers
+are inserted lazily whenever `groupLabel(item)` changes, so they are not part of the index.
+`scrollIntoView({ block: 'nearest' })` follows `.pbx-prow` by index, and `setIndex(0)` runs
+on every query or scope change.
+
+### Why settings are hidden on an empty query
+
+`matchesSetting` returns false when `q` is empty. Opening `Alt+K` with no query is the
+familiar session switcher; settings are a search-driven discovery, and the host section
+list is open-ended. Showing them by default would push sessions down and change a
+muscle-memory view for which the reader typed nothing. Typing a keyword is what opts into
+settings results.
+
+### Why project scope applies to sessions only
+
+`scope` is the project chip filter and is applied only to `visibleSessions`
+(`row.projectId === scope`). Settings are global — host sections and the plugin's single
+settings page have no project dimension — so filtering them by a project would silently
+hide every setting. The chips therefore leave both settings groups untouched.
 
 ## Notifications
 

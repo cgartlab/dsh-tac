@@ -305,7 +305,107 @@ test('the narrow board is a fixed width, so Alt+N opens narrow and closes on the
   assert.equal(narrowWidthUses.length, 2);
   /* ...and neither path falls back to the persisted width for narrow. */
   assert.doesNotMatch(source, /mode === "narrow" \? boardWidthDefault/);
-  /* Both mode classifications share the same threshold. */
+  /* The size bucket is decided in exactly one place (boardStateNow). */
   const thresholdUses = source.match(/<= BOARD_NARROW_MAX \? "narrow"/g) || [];
-  assert.equal(thresholdUses.length, 2);
+  assert.equal(thresholdUses.length, 1);
+});
+
+test('a dragged-wide pane is not classified as fullscreen', () => {
+  /* Treating "width >= 72% of the viewport" as full made a session switch restore the pane by
+     toggling real fullscreen, so a pane the user had dragged to ~75% jumped to 100%. Only the
+     host fullscreen flag may mean full, and the measured width is carried along so a restore
+     can put back exactly what was on screen. */
+  assert.doesNotMatch(source, /width >= viewport \* 0\.72/);
+  assert.match(source, /if \(rightbarFullscreen\(\)\) return \{ open: true, mode: "full" \}/);
+  assert.match(source, /want\.width >= 280/);
+});
+
+test('any size key closes the board, whatever size it is showing at', () => {
+  /* Alt+B used to mean "resize to half" while the pane was narrow and "close" while it was
+     half, so the key had no single meaning. Every size key is now its own toggle. */
+  assert.match(source, /if \(visible && expanded\) \{\s*sidebarRight\.toggleExpanded\(\);\s*return;/);
+  assert.doesNotMatch(source, /currentMode === mode/);
+});
+
+test('palette searches settings in three labelled groups and opens the target section', () => {
+  /* The copy must actually be embedded in the shipped bundle, in both locales. Adding a key
+     only to src/ without rebuilding used to leave the UI showing unresolved placeholders. */
+  for (const key of [
+    'palette.group.hostSettings',
+    'palette.group.pluginSettings',
+    'palette.group.sessions',
+    'palette.setting.open',
+    'toast.settingsOpenFailed',
+    'toast.settingsOpenPartial'
+  ]) {
+    assert.ok(source.includes('"' + key + '"'), key + ' is embedded in the bundle');
+  }
+  assert.match(source, /Search sessions, projects or settings/);
+  assert.match(source, /搜索会话、项目或设置/);
+  assert.match(source, /"palette.empty": "No matching results"/);
+  assert.match(source, /"palette.empty": "没有匹配的结果"/);
+
+  /* Group headers and the visually distinct settings row are real DOM, not just dictionary
+     entries. One index crosses all three groups so arrow keys and Enter keep working. */
+  assert.match(source, /className: "pbx-paletteGroup"/);
+  assert.match(source, /className: "pbx-prow pbx-prowSetting"/);
+  assert.match(source, /if \(item.kind === "session"\) return t\("palette.group.sessions"\)/);
+  assert.match(source, /entry.origin === "host" \? t\("palette.group.hostSettings"\) : t\("palette.group.pluginSettings"\)/);
+
+  /* Settings join the results only after the reader types: opening Alt+K stays session-only,
+     so the familiar list is unchanged until a query exists. */
+  assert.match(source, /if \(!q\) return false;/);
+
+  /* Opening a result prefers the public slot store's openSection(id) — open AND select —
+     then open(), then the host's own sidebar control. Every branch is probed, never assumed. */
+  assert.match(source, /typeof actions.openSection === "function"/);
+  assert.match(source, /actions.openSection\(sectionId\)/);
+  assert.match(source, /typeof actions.open === "function"/);
+  assert.match(source, /clickHostSettingsTrigger\(\)/);
+
+  /* Host sections come from the public ledger, so a section added by another plugin shows up
+     in search without a dsh-tac release; hard-coding the roster would silently go stale. */
+  assert.match(source, /entriesOf\(ctx, "settings.section"\)/);
+  assert.match(source, /entriesOf\(ctx, "sidebar.settings"\)/);
+  assert.match(source, /slots.subscribe\("settings.section", refreshSettingsCatalog\)/);
+});
+
+test('settings search indexes the host ledger and opens the selected section', () => {
+  /* Exercise the real apply() with a host-like slot ledger: the index must be built from the
+     public slot data (not a hard-coded roster), and choosing a result must call the shell
+     store's openSection(id) rather than just opening the Settings home page. */
+  const { module, window, document } = loadModule();
+  const { ctx, registrations } = createContext(window, document);
+  const opened = [];
+  const actions = {
+    openSection: (id) => opened.push(id),
+    open: () => opened.push('*open')
+  };
+  const shellStore = { create: () => ({ actions }) };
+  ctx.slots.entries = (name) => {
+    if (name === 'settings.section') return [
+      { options: { id: 'general', order: 0, label: () => 'General' } },
+      { options: { id: 'models', order: 10, label: 'Models' } },
+      { options: { id: 'project-board-settings', order: 60, label: () => 'Project Board' } }
+    ];
+    if (name === 'sidebar.settings') return [{ options: { store: shellStore } }];
+    return [];
+  };
+  module.apply(ctx);
+
+  const palette = registrations.find((entry) => entry.spec.id === 'project-board-palette');
+  assert.ok(palette, 'the palette slot is registered');
+  const props = palette.spec.inject();
+  assert.equal(typeof props.chooseSetting, 'function', 'palette receives the settings deep link');
+
+  const catalog = props.hooks.settingsCatalog.getSnapshot();
+  const hostIds = catalog.host.map((entry) => entry.sectionId);
+  assert.ok(hostIds.includes('general'), 'host section from the ledger is searchable');
+  assert.ok(hostIds.includes('models'), 'second host section is searchable');
+  assert.ok(!hostIds.includes('project-board-settings'), 'the plugin section is not duplicated in the host group');
+  assert.equal(catalog.plugin.length, 6, 'six plugin preferences are indexed');
+  assert.ok(catalog.plugin.every((entry) => entry.sectionId === 'project-board-settings'), 'plugin entries target their own section');
+
+  props.chooseSetting(catalog.host.find((entry) => entry.sectionId === 'models'));
+  assert.deepEqual(opened, ['models'], 'openSection receives the selected section id');
 });

@@ -2,13 +2,15 @@
  * The bundle's apply(): dictionary/style installation, the plugin's stores and actions, the
  * native board and sidebar integrations, and every slot registration.
  */
-import { BOARD_ID, BOARD_KIND, DEFAULT_SETTINGS, LOG_KEY, NS } from './constants';
+import { BOARD_ID, BOARD_KIND, BOARD_WIDTH_KEY, DEFAULT_SETTINGS, LOG_KEY, NS } from './constants';
 import { type HostContext } from './host';
 import { loadJson, saveJson } from './core/json';
 import { logConfigNow, logEvent, setLogConfigGetter, setLogSink } from './core/log';
 import { mergeSettings, loadSettings, persistSettings } from './core/settings';
 import { createPresetSource, createScheduleSource, type ObservableSnapshot, type PresetSnapshot, type ScheduleSnapshot } from './core/schedule';
 import { createUiStore } from './core/store';
+import { PLUGIN_SECTION_ID, openSettingsTarget, pluginSettingEntries, readHostSections } from './core/settings-catalog';
+import type { SettingEntry, SettingsCatalogSnapshot } from './core/settings-catalog';
 import { bindingsOverlap, comboBindingOf, comboDisplay, IS_MAC } from './core/combos';
 import { hostCentreColumnWidth, hostRightbarWidth, isRightPanelExpanded, isRightbarFullscreen, rightbarColumnElement, sidebarSignature } from './core/dom';
 import { moveCaretToEnd } from './features/interject';
@@ -211,6 +213,49 @@ export function apply(ctx: HostContext): void {
   };
 
   const settingsStore = createUiStore<Settings>(loadSettings());
+  /* Settings search index for the command palette. Host sections come from the public
+     `settings.section` ledger and are refreshed whenever that ledger changes, so a section
+     contributed by the host or another plugin appears in search without a dsh-tac release. */
+  const settingsCatalogStore = createUiStore<SettingsCatalogSnapshot>({ host: [], plugin: [], seq: 0 });
+  const settingsTargetStore = createUiStore<{ key: string | null; at: number }>({ key: null, at: 0 });
+  const refreshSettingsCatalog = (): void => {
+    try {
+      settingsCatalogStore.set({
+        host: readHostSections(ctx),
+        plugin: pluginSettingEntries(ctx.locale.bind(NS)),
+        seq: Date.now()
+      });
+    } catch (error) {
+      logEvent('warn', 'palette', 'settings-catalog', { reason: String((error && (error as Error).message) || error) });
+    }
+  };
+  refreshSettingsCatalog();
+  ctx.effect(() => {
+    const slots = ctx.slots as unknown as { subscribe?: (name: string, listener: () => void) => () => void };
+    if (typeof slots.subscribe !== 'function') return undefined;
+    try {
+      const off = slots.subscribe('settings.section', refreshSettingsCatalog);
+      return () => {
+        try { off(); } catch (error) { /* ignore */ }
+      };
+    } catch (error) {
+      return undefined;
+    }
+  }, 'project-board: settings catalog');
+  /** Palette -> Settings deep link. Returns false only when no host surface could open it. */
+  const chooseSetting = (entry: SettingEntry): boolean => {
+    const result = openSettingsTarget(ctx, entry.sectionId);
+    settingsTargetStore.set({ key: entry.anchor || null, at: Date.now() });
+    logEvent('info', 'settings', 'open-from-palette', { id: entry.id, result: result });
+    if (result === 'failed') {
+      pushToast({ tone: 'warn', title: '', message: ctx.locale.bind(NS)('toast.settingsOpenFailed') });
+    } else if (result !== 'section') {
+      /* The dialog opened but the host did not expose a way to preselect the section. Say so
+         instead of letting the reader assume "search for a setting" landed on it. */
+      pushToast({ tone: 'info', title: '', message: ctx.locale.bind(NS)('toast.settingsOpenPartial') });
+    }
+    return result !== 'failed';
+  };
   const logStore = createUiStore<{ entries: LogEntry[] }>(loadJson(LOG_KEY, { entries: [] as LogEntry[] }));
   setLogConfigGetter(() => settingsStore.getSnapshot().log || DEFAULT_SETTINGS.log);
   /* Shortcut paths schedule follow-up work a frame or two later (resize after the host's
@@ -220,7 +265,7 @@ export function apply(ctx: HostContext): void {
      fullscreen in a session that no longer has this plugin. Track them so one effect can
      clear everything on teardown. */
   const pendingTimers = new Set<number>();
-  const later = (run: () => void, delay: number): void => {
+  const later = (run: () => void, delay: number): number => {
     const id = window.setTimeout(() => {
       pendingTimers.delete(id);
       try {
@@ -230,6 +275,13 @@ export function apply(ctx: HostContext): void {
       }
     }, delay);
     pendingTimers.add(id);
+    return id;
+  };
+  /** Drop a scheduled follow-up: a newer one supersedes it. */
+  const cancelLater = (id: number): void => {
+    if (!id) return;
+    window.clearTimeout(id);
+    pendingTimers.delete(id);
   };
   let logPersistTimer = 0;
   setLogSink((entry: LogEntry) => {
@@ -307,7 +359,6 @@ export function apply(ctx: HostContext): void {
      in one place; these aliases keep the call sites reading naturally. */
   const boardPanelVisible = (): boolean => isRightPanelExpanded();
   const rightbarWidthNow = (): number => hostRightbarWidth();
-  const BOARD_WIDTH_KEY = 'pbx.board.width';
   /* Alt+N asks for "the narrow board", so narrow is a FIXED width, not the width the user
      last dragged. `boardStateNow()` classifies a pane by measured width (below `BOARD_NARROW_MAX`
      is narrow), so a restored 600px "narrow" pane reads as half: the next Alt+N then saw a
@@ -416,15 +467,19 @@ export function apply(ctx: HostContext): void {
     const snap = boardViewStore.getSnapshot();
     boardViewStore.set({ seq: snap.seq + 1, view });
   };
-  /** Current board pane state: { open, mode: 'narrow' | 'half' | 'full' | null }. */
+  /** Current board pane state: { open, mode: 'narrow' | 'half' | 'full' | null, width? }. */
   const boardStateNow = (): BoardState => {
     try {
       if (!boardOpenNow()) return { open: false, mode: null };
+      /* Only the host's real fullscreen flag counts as "full". A pane merely dragged wide is
+         still a sized pane: classifying it as full made a session switch restore it as 100%
+         fullscreen instead of the width the user had chosen. */
       if (rightbarFullscreen()) return { open: true, mode: 'full' };
       const width = rightbarWidthNow();
-      const viewport = window.innerWidth || 1200;
-      if (width >= viewport * 0.72) return { open: true, mode: 'full' };
-      return { open: true, mode: width <= BOARD_NARROW_MAX ? 'narrow' : 'half' };
+      const mode = width <= BOARD_NARROW_MAX ? 'narrow' : 'half';
+      /* Record the measured width so a restore can put back exactly what was there; the mode
+         bucket alone cannot express "wider than half but not fullscreen". */
+      return { open: true, mode: mode, width: Math.round(width) };
     } catch (error) {
       return { open: false, mode: null };
     }
@@ -448,7 +503,11 @@ export function apply(ctx: HostContext): void {
       }
       if (rightbarFullscreen()) toggleRightbarFullscreen();
       const viewport = window.innerWidth || 1200;
-      const width = mode === 'narrow' ? BOARD_NARROW_WIDTH : Math.round(viewport * 0.5);
+      const fallback = mode === 'narrow' ? BOARD_NARROW_WIDTH : Math.round(viewport * 0.5);
+      /* Prefer the width that was actually on screen when the state was recorded: the mode
+         alone cannot express a pane wider than half but not fullscreen. */
+      const saved = typeof want.width === 'number' && want.width >= 280 ? Math.round(want.width) : 0;
+      const width = saved || fallback;
       if (Math.abs(rightbarWidthNow() - width) > 24) setRightbarWidth(width);
     } catch (error) {
       /* ignore */
@@ -457,6 +516,9 @@ export function apply(ctx: HostContext): void {
   /** Show the right-pane board at `mode`. `resetView` is false when the pane is already
    *  open and the user is only resizing it (Alt+B/V while it shows) — resizing must not
    *  throw away the view they picked (e.g. sessions). True means "this is an open". */
+  /* One pending width follow-up at a time: whichever entry point acted last owns the final
+     width, and a stale callback must never re-apply the previous presentation. */
+  let boardWidthFollowUp = 0;
   const showNativeBoard = (mode: string, resetView = true): void => {
     /* Opening the board via a shortcut should land on the project view. */
     if (resetView) requestBoardView('projects');
@@ -473,8 +535,13 @@ export function apply(ctx: HostContext): void {
       const viewport = window.innerWidth || 1200;
       const width = mode === 'narrow' ? BOARD_NARROW_WIDTH : Math.round(viewport * 0.5);
       setRightbarWidth(width);
-      /* A presentation persisted from a fullscreen open lands one render later. */
-      later(() => {
+      /* A presentation persisted from a fullscreen open lands one render later. A newer
+         presentation supersedes the pending one: pressing Alt+B then Alt+N inside 130ms used to
+         leave the half-width follow-up alive, so it re-applied 50vw for a frame and flashed the
+         pane back before the narrow width won. */
+      cancelLater(boardWidthFollowUp);
+      boardWidthFollowUp = later(() => {
+        boardWidthFollowUp = 0;
         if (rightbarFullscreen()) toggleRightbarFullscreen();
         setRightbarWidth(width);
       }, 130);
@@ -532,31 +599,23 @@ export function apply(ctx: HostContext): void {
       if (!sidebarRight) return;
       const visible = rightBoardActive();
       const expanded = boardPanelVisible();
-      const full = rightbarFullscreen();
-      if (mode === 'full') {
-        if (visible && expanded && full) {
-          /* Same key again closes the panel, like the narrow/medium toggles. */
-          sidebarRight.toggleExpanded();
-          return;
-        }
-        /* Already showing (just not fullscreen) means the user is enlarging an open
-           board — keep their view instead of snapping back to projects. */
-        showNativeBoard('full', !(visible && expanded));
+      /* "Project board: off" hides the header button and replaces the pane contents with a
+         disabled notice, so the shortcut must not be the one way back in. The key still acts
+         as an off switch while the pane happens to be showing, so the user is never stuck. */
+      if (settingsStore.getSnapshot().board.enabled === false) {
+        if (visible && expanded) sidebarRight.toggleExpanded();
+        logEvent('info', 'board', 'toggle-disabled', { mode: mode });
         return;
       }
-      const currentWidth = rightbarWidthNow();
-      const currentMode = currentWidth > 0 && currentWidth <= BOARD_NARROW_MAX ? 'narrow' : 'half';
-      if (visible && expanded && !full) {
-        /* Same mode again closes; a different size key just resizes the open pane —
-           and a resize must not reset the view the user is looking at. */
-        if (currentMode === mode) {
-          sidebarRight.toggleExpanded();
-          return;
-        }
-        showNativeBoard(mode, false);
+      /* Each size key is its own toggle. While the board is showing in ANY size, pressing any
+         size key closes it — "press again to close" then holds whatever size you are looking
+         at, instead of turning Alt+B into a resize when the pane happens to be narrow. Opening
+         always lands on the pressed key's own size. */
+      if (visible && expanded) {
+        sidebarRight.toggleExpanded();
         return;
       }
-      showNativeBoard(mode, !(visible && expanded));
+      showNativeBoard(mode, !expanded);
     } catch (error) {
       console.warn('project-board: toggle native board failed', error);
     }
@@ -566,11 +625,18 @@ export function apply(ctx: HostContext): void {
     try {
       const sidebarRight = ctx.sidebarRight;
       if (!sidebarRight) return;
+      /* Same rule as the shortcut: the setting hides the board, so no entry point may open it. */
+      if (settingsStore.getSnapshot().board.enabled === false) {
+        logEvent('info', 'board', 'open-disabled', {});
+        return;
+      }
       sidebarRight.openTab(BOARD_KIND);
       if (!boardPanelVisible()) {
         sidebarRight.toggleExpanded();
         const width = boardWidthDefault();
-        later(() => {
+        cancelLater(boardWidthFollowUp);
+        boardWidthFollowUp = later(() => {
+          boardWidthFollowUp = 0;
           if (!rightbarFullscreen()) setRightbarWidth(width);
         }, 60);
       }
@@ -862,7 +928,8 @@ export function apply(ctx: HostContext): void {
           requestRename: requestRename,
           requestSessionMenu: requestSessionMenu,
           notify: pushToast,
-          hooks: { palette: paletteStore, settings: settingsStore, focus: focusStore, hudOrder: hudOrderStore }
+          chooseSetting: chooseSetting,
+          hooks: { palette: paletteStore, settings: settingsStore, settingsCatalog: settingsCatalogStore, focus: focusStore, hudOrder: hudOrderStore }
         })
       },
       Palette as unknown as (props: never) => unknown
@@ -958,7 +1025,7 @@ export function apply(ctx: HostContext): void {
     ctx.slots.register(
       {
         name: 'settings.section',
-        id: 'project-board-settings',
+        id: PLUGIN_SECTION_ID,
         order: 60,
         locale: NS,
         label: () => {
@@ -975,7 +1042,7 @@ export function apply(ctx: HostContext): void {
           findBuiltinConflict: findBuiltinConflict,
           logs: logStore,
           hooks: Object.assign(
-            { settings: settingsStore, logs: logStore },
+            { settings: settingsStore, logs: logStore, settingsTarget: settingsTargetStore },
             shortcutsService && shortcutsService.catalog ? { shortcutsCatalog: shortcutsService.catalog } : {}
           )
         })

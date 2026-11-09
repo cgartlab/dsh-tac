@@ -205,6 +205,11 @@ export function ProjectBoard(props: ProjectBoardProps): unknown {
     .sort()
     .join('\n');
   const [repoStats, setRepoStats] = useState<Record<string, RepoStats>>({});
+  /* Rendering every session row at once is fine for the usual few dozen, but a profile with
+     hundreds of sessions pays for all of them on every keystroke in the search box. Render in
+     batches above this size and let the reader ask for more. */
+  const SESSION_RENDER_BATCH = 200;
+  const [sessionLimit, setSessionLimit] = useState(SESSION_RENDER_BATCH);
   useEffect(() => {
     let cancelled = false;
     const targets = Object.keys(githubRepos).filter((path) => {
@@ -465,6 +470,14 @@ export function ProjectBoard(props: ProjectBoardProps): unknown {
     return rows;
   }, [allSessions, statusFilter, kindFilter, projectFilter, query, sessionSorts, presetNames, t]);
 
+  /* A new filter or search starts from the first batch again, otherwise a previous "show more"
+     would keep a narrow result fully expanded and defeat the point. */
+  useEffect(() => {
+    setSessionLimit(SESSION_RENDER_BATCH);
+  }, [query, statusFilter, kindFilter, projectFilter, sessionSorts]);
+  const shownSessions = filteredSessions.length > sessionLimit ? filteredSessions.slice(0, sessionLimit) : filteredSessions;
+  const hiddenSessionCount = filteredSessions.length - shownSessions.length;
+
   const filteredProjects = useMemo(() => {
     const q = query.trim().toLowerCase();
     let rows = projectModels.filter((p) => !q || p.name.toLowerCase().includes(q) || p.path.toLowerCase().includes(q));
@@ -660,14 +673,38 @@ export function ProjectBoard(props: ProjectBoardProps): unknown {
     if (filteredSessions.length === 0) {
       return h('tr', null, h('td', { colSpan: 7, className: 'pbx-emptyCell' }, t('empty.filtered')));
     }
-    if (!grouped) return filteredSessions.map(renderSessionRow);
+    const moreRow =
+      hiddenSessionCount > 0
+        ? h(
+            'tr',
+            { key: 'show-more' },
+            h(
+              'td',
+              { colSpan: 7, className: 'pbx-moreCell' },
+              h(
+                'button',
+                {
+                  type: 'button',
+                  className: 'pbx-setBtn',
+                  onClick: () => setSessionLimit((n) => n + SESSION_RENDER_BATCH)
+                },
+                t('board.showMore', { n: hiddenSessionCount })
+              )
+            )
+          )
+        : null;
+    if (!grouped) {
+      const rendered = shownSessions.map(renderSessionRow);
+      return moreRow ? rendered.concat([moreRow]) : rendered;
+    }
     const rows: unknown[] = [];
     for (const project of projectModels) {
-      const groupRows = filteredSessions.filter((s) => s.workspaceId === project.workspaceId);
+      const groupRows = shownSessions.filter((s) => s.workspaceId === project.workspaceId);
       if (groupRows.length === 0) continue;
-      rows.push(renderGroupHeader(project.workspaceId, project.name, groupRows.length));
+      rows.push(renderGroupHeader(project.workspaceId, project.name, filteredSessions.filter((s) => s.workspaceId === project.workspaceId).length));
       if (collapsed[project.workspaceId] !== true) rows.push.apply(rows, groupRows.map(renderSessionRow));
     }
+    if (moreRow) rows.push(moreRow);
     return rows;
   };
 
@@ -685,6 +722,7 @@ export function ProjectBoard(props: ProjectBoardProps): unknown {
     if (code === 'repo-not-found') return t('col.errRepoNotFound');
     if (code === 'token-invalid') return t('col.errTokenInvalid');
     if (code === 'rate-limited') return t('col.errRateLimited');
+    if (code === 'timeout') return t('col.errTimeout');
     return t('col.errGeneric', { code: code || '?' });
   };
   const projectCell = (project: ProjectModel, def: ProjectColumn): unknown => {
@@ -1105,7 +1143,22 @@ export function ProjectBoard(props: ProjectBoardProps): unknown {
     const compactSessionList =
       filteredSessions.length === 0
         ? h('div', { className: 'pbx-cgroupEmpty' }, t('empty.filtered'))
-        : h('div', { className: 'pbx-compactList' }, filteredSessions.map(compactRow));
+        : h(
+            'div',
+            { className: 'pbx-compactList' },
+            shownSessions.map(compactRow),
+            hiddenSessionCount > 0
+              ? h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'pbx-setBtn pbx-showMore',
+                    onClick: () => setSessionLimit((n) => n + SESSION_RENDER_BATCH)
+                  },
+                  t('board.showMore', { n: hiddenSessionCount })
+                )
+              : null
+          );
     return h(
       'div',
       { className: 'pbx-root pbx-compact' },
