@@ -9,6 +9,12 @@
 原生右侧栏的全局项目/会话看板、浮动会话 HUD、键盘优先的会话导航、按住即滚的长对话阅读，
 以及桌面级的任务通知。
 
+![项目看板](docs/screenshots/board.png)
+
+| 悬浮会话列表 | 命令面板（会话 / 项目 / 设置） |
+| --- | --- |
+| ![悬浮会话列表](docs/screenshots/hud.png) | ![命令面板](docs/screenshots/palette.png) |
+
 ## 功能
 
 - **项目看板** —— 会话与项目两种数据库视图，支持搜索、状态/类型/项目筛选、分组、多列排序、
@@ -81,18 +87,71 @@
   `dsh-client-ui-workspace`、`dsh-client-ui-session` 客户端包。
 - Node.js 18+ 仅用于仓库检查；插件本身由 Harness 加载。
 
+**已验证的版本**：DSH `0.2.2-rc.1`（macOS / Windows 桌面版与 Web UI）。
+DSH 处于开发者预览期，插件用到的都是公开客户端服务，但上游若有破坏性改动仍可能需要更新；
+遇到问题请附上 DSH 版本开 issue。
+
 ## 安装
 
-以本地链接方式安装（不发布到 npm）：
+装之前只需要两样东西：**已装好的 DeepSeek Harness（DSH）**，以及**能访问 GitHub**。
+不需要 Node 环境、不需要 `npm install`——插件的运行时零依赖，React 由 DSH 自己提供。
+
+### 方式一：从 GitHub 安装（推荐）
+
+在任意终端里执行：
+
+```bash
+dsh plugin --profile web add github:cgartlab/dsh-tac
+```
+
+执行完**重启 DSH**（或在 DSH 里按 `Ctrl+R` 重新加载窗口）。装好后你会立刻看到：
+
+- 左下角多了一块**悬浮会话列表**；
+- 会话顶部（输入框上方或标题栏）多了**搜索框和几个按钮**；
+- 打开右侧面板（`Ctrl+Alt+B`）能看到**项目看板**。
+
+如果没看到，先确认这三处：DSH 版本是否较新、插件是否在「设置 → 插件」里被启用、有没有把 DSH 完全重启（不是只关窗口）。
+
+### 方式二：本机开发时链接源码
+
+改了代码想看效果时用这个，装的是你本地这份：
 
 ```powershell
 plugin_manager install_bundle target="<本仓库路径>"
 ```
 
-包名为 `@local/dsh-tac`，以 `dsh-tac` 这个 loader 条目插入。
-`package.json` 暴露 `dsh.bundle.patch` 与 `dsh.client`；插件注入
-`conversation.header.leading`、`conversation.session.header.utilities`、
-`conversation.composer.dock`、`shell.overlay` 和 `settings.section`。
+包名为 `@local/dsh-tac`，以 `dsh-tac` 这个 loader 条目插入。`package.json` 暴露
+`dsh.bundle.patch` 与 `dsh.client`；插件注入 `conversation.header.leading`、
+`conversation.session.header.utilities`、`conversation.composer.dock`、`shell.overlay`
+和 `settings.section`。
+
+### 改完代码怎么让它生效
+
+插件是客户端 bundle，改完 `src/` 要重新构建再热重载：
+
+```bash
+npm install        # 只需第一次
+npm run build      # src/ → client.js + index.js
+```
+
+然后在 DSH 里把插件**禁用再启用**一次（设置 → 插件 → `dsh-tac`），或按 `Ctrl+R` 重新加载窗口。
+构建产物是提交进仓库的，`npm run check` 会校验产物与源码一致。
+
+### 卸载
+
+```bash
+dsh plugin --profile web remove @local/dsh-tac
+```
+
+或在「设置 → 插件」里禁用 `dsh-tac`。插件不写任何 DSH 数据；卸载后残留的只有它自己的设置与日志（存在浏览器 localStorage 里），可以随插件一起清掉。
+
+### 它需要什么权限
+
+- 读会话列表与状态、切换会话、重命名、归档——全部通过 DSH 公开的客户端服务，**不读会话内容**。
+- 可选：读 GitHub 公开 API 以显示 Open Issue / PR / 最新版本。**只在你自己在设置里填了仓库映射后才发请求**；填 token 才能读私有仓库，token 只存在本机。
+- 可选：系统通知（需要 DSH 或操作系统授予通知权限）。
+
+---
 
 ## 实现方式
 
@@ -100,6 +159,11 @@ plugin_manager install_bundle target="<本仓库路径>"
 bundle 通过 Harness 客户端模块加载器加载，只使用公开客户端能力（`ctx.slots`、
 `ctx.sidebarRight`、`ctx.layout`、`ctx.get('workspaces')`、会话状态 store）以及宿主提供的
 React，自身没有运行时依赖；宿主侧 `index.js` 刻意保持 no-op。
+
+这是一个**客户端插件**：必需的 `apply(ctx)` 入口按 DSH 客户端插件的约定导出——
+`window.__ModuleLoader__.load({ id, factory })`，factory 返回 `{ inject, apply }`
+（见 `src/index.ts`）。顶层 `index.js` 是空的，因为全部逻辑跑在浏览器里；所以审核时找
+`apply` 请读 `src/index.ts` / `client.js`，不要看 `index.js`。
 
 - `src/index.ts` —— Harness 注入的入口：绑定宿主 React、调用 `apply`
 - `src/apply.ts` —— 字典、样式、store、原生看板/侧栏动作、插槽注册

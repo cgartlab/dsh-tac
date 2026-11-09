@@ -10,6 +10,12 @@ project-aware workspace: a global project/session board in the native right side
 floating session HUD, keyboard-first session navigation, hold-to-scroll conversation
 reading, and desktop-class task notifications.
 
+![Project board](docs/screenshots/board.png)
+
+| Floating session list | Command palette (sessions / projects / settings) |
+| --- | --- |
+| ![Floating session list](docs/screenshots/hud.png) | ![Command palette](docs/screenshots/palette.png) |
+
 ## Features
 
 - **Project board** — session and project database views with search, status/type/project
@@ -99,9 +105,34 @@ scroll-to-bottom, session cycle) stand down so typing is never interrupted.
   `dsh-client-ui-sidebar`, `dsh-client-ui-workspace`, and `dsh-client-ui-session`.
 - Node.js 18+ only for repository checks; the plugin itself is loaded by the harness.
 
+**Verified against**: DSH `0.2.2-rc.1` (desktop app on macOS / Windows, and the web UI).
+DSH is in developer preview; the plugin only uses public client services, but an upstream
+breaking change may still need a follow-up release — please include your DSH version in issues.
+
 ## Install
 
-The bundle is installed as a local link, not from npm:
+You need two things: **DeepSeek Harness (DSH) already installed**, and **access to GitHub**.
+No Node setup, no `npm install` — the plugin has zero runtime dependencies and React comes from
+DSH itself.
+
+### Option 1: install from GitHub (recommended)
+
+```bash
+dsh plugin --profile web add github:cgartlab/dsh-tac
+```
+
+Then **restart DSH** (or press `Ctrl+R` to reload the window). You should immediately see:
+
+- a **floating session list** in the bottom-left;
+- a **search box and a few buttons** in the conversation header;
+- a **project board** when you open the right pane (`Ctrl+Alt+B`).
+
+If nothing appears, check three things: your DSH build is recent enough, the plugin is enabled
+under **Settings → Plugins**, and DSH was fully restarted (not just its window closed).
+
+### Option 2: link the source while developing
+
+Use this when you want your local checkout, not the published one:
 
 ```powershell
 plugin_manager install_bundle target="<this repository>"
@@ -112,6 +143,36 @@ The package is `@local/dsh-tac` and inserts itself as the `dsh-tac` loader entry
 `conversation.header.leading`, `conversation.session.header.utilities`,
 `conversation.composer.dock`, `shell.overlay`, and `settings.section`.
 
+### Making a source change take effect
+
+The plugin ships as a client bundle, so after editing `src/` rebuild and hot-reload:
+
+```bash
+npm install        # first time only
+npm run build      # src/ → client.js + index.js
+```
+
+Then disable and re-enable the plugin under **Settings → Plugins**, or press `Ctrl+R`.
+The built artifacts are committed; `npm run check` verifies they match the sources.
+
+### Uninstall
+
+```bash
+dsh plugin --profile web remove @local/dsh-tac
+```
+
+Or disable `dsh-tac` under **Settings → Plugins**. The plugin writes no DSH data; what survives
+an uninstall is only its own settings and logs (kept in browser localStorage).
+
+### What it is allowed to touch
+
+- Read the session list and status, switch sessions, rename, archive — all through DSH's public
+  client services. It **does not read conversation content**.
+- Optional: the public GitHub API, for the Open Issue / PR / latest-release columns. Requests are
+  only made for repositories **you** map in settings; a token (kept on this machine) is needed
+  for private repositories.
+- Optional: system notifications, subject to the OS/DSH permission.
+
 ## How it is built
 
 The plugin is written in **TypeScript** under `src/` and compiled into a single client bundle
@@ -119,6 +180,12 @@ The plugin is written in **TypeScript** under `src/` and compiled into a single 
 only public client services (`ctx.slots`, `ctx.sidebarRight`, `ctx.layout`,
 `ctx.get('workspaces')`, session status stores) and takes React from the host. It ships with no
 runtime dependencies of its own; host-half `index.js` is intentionally a no-op.
+
+This is a **client-half plugin**: the required `apply(ctx)` entry is exported the way a DSH
+client plugin specifies it — `window.__ModuleLoader__.load({ id, factory })`, whose factory
+returns `{ inject, apply }` (`src/index.ts`). The top-level `index.js` is deliberately empty
+because everything runs in the browser, so a reviewer looking for `apply` should read
+`src/index.ts` / `client.js` rather than `index.js`.
 
 - `src/index.ts` — entry the harness injects; binds the host React and calls `apply`
 - `src/apply.ts` — dictionaries, styles, stores, native board/sidebar actions, slot wiring
