@@ -333,7 +333,7 @@ export function SettingsPage(props: SettingsPageProps): unknown {
         h('input', {
           type: 'text',
           className: 'pbx-setInput pbx-githubRepoName',
-          'aria-label': t('settings.githubPlaceholderRepo'),
+          'aria-label': t('settings.githubRepo'),
           placeholder: t('settings.githubPlaceholderRepo'),
           value: setting.repo,
           onInput: (event: Event) => updateGithubRepo(path, { repo: (event.target as HTMLInputElement).value })
