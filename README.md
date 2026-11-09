@@ -88,7 +88,7 @@ physical Option key. On Windows and Linux the same combinations are shown as `Al
 | `⌥+I` / `⌥+,` | Previous / next session |
 | `⌥+U` / `⌥+M` | Previous / next user instruction (tap to jump, hold to scroll) |
 | `⌥+S` | Scroll to bottom and focus the composer |
-| `⌥+D` | Session actions dialog (archive; delete where the host exposes it) |
+| `⌥+D` | Session actions dialog (archive / stop a running turn / delete where the host exposes it) |
 | `⌥+N` / `⌥+B` / `⌥+V` | Board at narrow / medium / fullscreen. Any of them closes an open board; a closed board opens at the size you pressed |
 | `⌥+W` | Show / hide the native left sidebar; leaves a fullscreen board first |
 | `⌥+R` | Rename the current session |
@@ -115,7 +115,18 @@ You need two things: **DeepSeek Harness (DSH) already installed**, and **access 
 No Node setup, no `npm install` — the plugin has zero runtime dependencies and React comes from
 DSH itself.
 
-### Option 1: install from GitHub (recommended)
+### Option 1: install inside DSH (easiest)
+
+No terminal needed:
+
+1. Open DSH and click **Plugins** in the left sidebar;
+2. click **"+ Add plugin"** in the top right;
+3. type **`dsh-tac`** (a GitHub URL or a local directory also works);
+4. click **Install**, then **restart DSH**.
+
+It then shows up under "installed plugins" with its own on/off switch.
+
+### Option 2: install from the command line
 
 **First, find the `dsh` command.** The desktop app ships its own CLI and does not put it on
 `PATH`. It lives here:
@@ -163,13 +174,16 @@ You should immediately see:
 1. whether `dsh-tac` is in `dsh.profile.bundles` of
    `~/.dsh/profiles/<name>/package.json` (`dsh plugin add` normally writes it; add the entry by
    hand if it is missing);
-2. whether it is disabled under **Settings → Plugins**;
+2. whether it is switched off in the **Plugins** page's "installed plugins" list;
 3. whether DSH was **fully restarted** (closing the window is not the same as quitting).
 
-> The package is named `dsh-tac` — a local scope, so it never collides with an npm
-> package of the same name. Use that full name in commands.
+### Where the plugin's own settings live
 
-### Option 2: link the source while developing
+At the bottom of the DSH sidebar, **`⋯ More` → `Settings`** (or `Ctrl+,`), then pick
+**"项目看板设置"** in the left-hand list. Everything is there: all shortcuts, floating-list
+behaviour, the board's default view, the GitHub data source and the log level.
+
+### Option 3: link the source while developing
 
 Use this when you want your local checkout, not the published one:
 

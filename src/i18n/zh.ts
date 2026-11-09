@@ -55,7 +55,7 @@ export const zh = {
       'settings.shortcut.rename': '重命名当前会话',
       'settings.shortcut.interject': '插话发送最早排队的消息',
       'settings.shortcut.hud': '收起/展开悬浮列表',
-      'settings.shortcut.sessionMenu': '打开会话操作对话框（归档 / 删除 / 取消）',
+      'settings.shortcut.sessionMenu': '打开会话操作对话框（归档 / 停止运行 / 删除）',
       'rename.title': '重命名会话', 'rename.label': '会话名称', 'rename.placeholder': '输入新的会话名称', 'rename.cancel': '取消', 'rename.confirm': '保存', 'rename.saving': '保存中…', 'rename.failed': '重命名失败',
       'toast.conflictTitle': '快捷键冲突',
       'toast.conflictOwn': '「{combo}」已被本插件的「{name}」占用。',

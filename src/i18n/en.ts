@@ -57,7 +57,7 @@ export const en: Dict = {
       'settings.shortcut.rename': 'Rename current session',
       'settings.shortcut.interject': 'Interject the earliest queued message',
       'settings.shortcut.hud': 'Collapse/expand floating list',
-      'settings.shortcut.sessionMenu': 'Open session actions dialog (archive / delete / cancel)',
+      'settings.shortcut.sessionMenu': 'Open session actions dialog (archive / stop turn / delete)',
       'rename.title': 'Rename session', 'rename.label': 'Session name', 'rename.placeholder': 'Enter a new session name', 'rename.cancel': 'Cancel', 'rename.confirm': 'Save', 'rename.saving': 'Saving…', 'rename.failed': 'Rename failed',
       'toast.conflictTitle': 'Shortcut conflict',
       'toast.conflictOwn': '"{combo}" is already used by this plugin\'s "{name}".',
