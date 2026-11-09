@@ -1,4 +1,4 @@
-/*! dsh-tac 0.4.1 — generated from src/ by scripts/build.mjs; do not edit */
+/*! dsh-tac 0.4.2 — generated from src/ by scripts/build.mjs; do not edit */
 "use strict";
 (() => {
   // src/constants.ts
