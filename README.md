@@ -117,18 +117,51 @@ DSH itself.
 
 ### Option 1: install from GitHub (recommended)
 
+**First, find the `dsh` command.** The desktop app ships its own CLI and does not put it on
+`PATH`. It lives here:
+
+| Platform | Path |
+| --- | --- |
+| Windows | `%LOCALAPPDATA%\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd` |
+| macOS | `/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh` |
+
+Add it to `PATH` if you want plain `dsh`, otherwise use the full path.
+
+**Then confirm your profile name.** That is the configuration you actually run; look at what
+exists:
+
 ```bash
-dsh plugin --profile web add github:cgartlab/dsh-tac
+ls ~/.dsh/profiles/
 ```
 
-Then **restart DSH** (or press `Ctrl+R` to reload the window). You should immediately see:
+The desktop app is usually `desktop`; `npx @deepseek-ai/dsh web` creates `web`. **Do not guess
+this** — installing into the wrong profile leaves the plugin installed but completely inactive.
+
+Install it (replace `desktop` with the name you just saw):
+
+```bash
+dsh plugin --profile desktop add github:cgartlab/dsh-tac
+```
+
+This downloads the package **and registers it in that profile's `dsh.profile.bundles`**
+automatically — no hand-editing the JSON. Then **restart DSH**.
+
+You should immediately see:
 
 - a **floating session list** in the bottom-left;
 - a **search box and a few buttons** in the conversation header;
 - a **project board** when you open the right pane (`Ctrl+Alt+B`).
 
-If nothing appears, check three things: your DSH build is recent enough, the plugin is enabled
-under **Settings → Plugins**, and DSH was fully restarted (not just its window closed).
+**If nothing appears**, check in this order:
+
+1. whether `@local/dsh-tac` is in `dsh.profile.bundles` of
+   `~/.dsh/profiles/<name>/package.json` (`dsh plugin add` normally writes it; add the entry by
+   hand if it is missing);
+2. whether it is disabled under **Settings → Plugins**;
+3. whether DSH was **fully restarted** (closing the window is not the same as quitting).
+
+> The package is named `@local/dsh-tac` — a local scope, so it never collides with an npm
+> package of the same name. Use that full name in commands.
 
 ### Option 2: link the source while developing
 
@@ -158,7 +191,7 @@ The built artifacts are committed; `npm run check` verifies they match the sourc
 ### Uninstall
 
 ```bash
-dsh plugin --profile web remove @local/dsh-tac
+dsh plugin --profile desktop remove @local/dsh-tac
 ```
 
 Or disable `dsh-tac` under **Settings → Plugins**. The plugin writes no DSH data; what survives

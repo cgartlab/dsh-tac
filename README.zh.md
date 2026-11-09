@@ -98,19 +98,44 @@ DSH 处于开发者预览期，插件用到的都是公开客户端服务，但�
 
 ### 方式一：从 GitHub 安装（推荐）
 
-在任意终端里执行：
+**先找到 `dsh` 命令。** 桌面版自带的 CLI 不在 PATH 里，它在这里：
+
+| 平台 | 路径 |
+| --- | --- |
+| Windows | `%LOCALAPPDATA%\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd` |
+| macOS | `/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh` |
+
+想省事就把它加进 PATH，之后直接用 `dsh`；不加就用完整路径。
+
+**再确认你的 profile 名。** 它就是你平时在用的那套配置，看这个目录里有什么：
 
 ```bash
-dsh plugin --profile web add github:cgartlab/dsh-tac
+ls ~/.dsh/profiles/
 ```
 
-执行完**重启 DSH**（或在 DSH 里按 `Ctrl+R` 重新加载窗口）。装好后你会立刻看到：
+桌面版通常是 `desktop`，`npx @deepseek-ai/dsh web` 起的是 `web`。**这一步别猜**——装错 profile 的话插件会装好但完全不出现。
+
+然后安装（把 `desktop` 换成上一步看到的那个名字）：
+
+```bash
+dsh plugin --profile desktop add github:cgartlab/dsh-tac
+```
+
+这条命令会把包下载下来，并**自动把它注册进该 profile 的 `dsh.profile.bundles`**（不需要手动改 json），最后**重启 DSH**。
+
+装好后你会立刻看到：
 
 - 左下角多了一块**悬浮会话列表**；
-- 会话顶部（输入框上方或标题栏）多了**搜索框和几个按钮**；
+- 会话顶部多了**搜索框和几个按钮**；
 - 打开右侧面板（`Ctrl+Alt+B`）能看到**项目看板**。
 
-如果没看到，先确认这三处：DSH 版本是否较新、插件是否在「设置 → 插件」里被启用、有没有把 DSH 完全重启（不是只关窗口）。
+**没出现怎么办**，按顺序查：
+
+1. `~/.dsh/profiles/<名字>/package.json` 的 `dsh.profile.bundles` 里有没有 `@local/dsh-tac`（`dsh plugin add` 通常会写进去；没有就手动加一项）；
+2. 「设置 → 插件」里它是不是被禁用了；
+3. 有没有**完全重启** DSH（关窗口不等于退出进程）。
+
+> 包名现在是 `@local/dsh-tac`：它是本地作用域，所以不同时跟 npm 上的同名包冲突。命令里统一用这个全名。
 
 ### 方式二：本机开发时链接源码
 
@@ -140,7 +165,7 @@ npm run build      # src/ → client.js + index.js
 ### 卸载
 
 ```bash
-dsh plugin --profile web remove @local/dsh-tac
+dsh plugin --profile desktop remove @local/dsh-tac
 ```
 
 或在「设置 → 插件」里禁用 `dsh-tac`。插件不写任何 DSH 数据；卸载后残留的只有它自己的设置与日志（存在浏览器 localStorage 里），可以随插件一起清掉。
