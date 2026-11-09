@@ -1,6 +1,7 @@
 /** Composer focus, caret placement, native "back to bottom" and steering queued messages. */
 import { findChatScroller, visibleChatFlow } from './chat-dom';
 import { isPaletteOpen } from '../core/dom';
+import { logEvent } from '../core/log';
 
 const STEER_LABELS = ['插话发送', 'Steer queued message'];
 
@@ -137,6 +138,7 @@ export function scrollToComposerAndFocus(): void {
     }
   }
   const target = (scrollParent as HTMLElement | null) || findChatScroller();
+  if (!target) logEvent('debug', 'shortcut', 'scrollBottom:no-chat', {});
   if (target) {
     const pin = (left: number): void => {
       const node = target.isConnected ? target : findChatScroller();

@@ -63,10 +63,10 @@ g) 测试：`npm test` 全绿；新行为有回归测试；不得为变绿删测
 - 允许：推 PR 分支、squash 合并通过判定的 PR（含 `--delete-branch`）、发版 PR 的 tag 与 release。
 - 网络 / CI / 凭据查询失败必须写明「没查成」及原始错误，不得写成「没有」。
 
-## 本机网络注意（2026-11-06 实测）
+## 网络注意
 
-- 本机 `git` 配了 `http.proxy = http://127.0.0.1:7900`；本地代理没起时 `git fetch` / `git push` 直接失败：
-  `Failed to connect to github.com port 443 via 127.0.0.1`。`gh`（走 API）不受影响。
+- 若 `git fetch` / `git push` 报「Failed to connect to github.com port 443」这类错误，通常是本机 `git` 配置的 HTTP 代理没起来，不是仓库或权限问题；`gh`（走 API）不受影响。
+- 排查：`git config --get http.proxy` 看当前代理设置，确认对应端口有服务在监听。
 - 绕过：`git -c http.proxy= -c https.proxy= fetch origin`（push 同理）。大 pack 传输仍可能被重置，
   此时改用 `gh api` 读写文件（在服务端产生提交），不要用 reset / force 硬来。
 

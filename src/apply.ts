@@ -599,19 +599,15 @@ export function apply(ctx: HostContext): void {
       if (!sidebarRight) return;
       const visible = rightBoardActive();
       const expanded = boardPanelVisible();
-      /* "Project board: off" hides the header button and replaces the pane contents with a
-         disabled notice, so the shortcut must not be the one way back in. The key still acts
-         as an off switch while the pane happens to be showing, so the user is never stuck. */
-      if (settingsStore.getSnapshot().board.enabled === false) {
-        if (visible && expanded) sidebarRight.toggleExpanded();
-        logEvent('info', 'board', 'toggle-disabled', { mode: mode });
-        return;
-      }
       /* Each size key is its own toggle. While the board is showing in ANY size, pressing any
          size key closes it — "press again to close" then holds whatever size you are looking
          at, instead of turning Alt+B into a resize when the pane happens to be narrow. Opening
-         always lands on the pressed key's own size. */
+         always lands on the pressed key's own size. (A disabled board never reaches here: the
+         dispatcher leaves those combos to the rest of the app.) */
       if (visible && expanded) {
+        /* Leave the fullscreen presentation first for the same reason Alt+W does: collapsing a
+           fullscreen right bar can otherwise leave it covering the page. */
+        if (rightbarFullscreen()) toggleRightbarFullscreen();
         sidebarRight.toggleExpanded();
         return;
       }
@@ -788,22 +784,21 @@ export function apply(ctx: HostContext): void {
     };
   }, 'project-board: error hooks');
 
-  ctx.effect(() => installChatScrollListeners(), 'project-board: chat scroll listeners');
-
   /* Scrolling to the top of a conversation loads the previous page of history for you,
-     instead of requiring a click on the host's "load earlier" control every time. */
+     instead of requiring a click on the host's "load earlier" control every time. The same
+     setting gates the held-scroll loop's prefetch, so switching it off also stops a held
+     Alt+U from pulling history in the background. */
+  const autoHistoryEnabled = (): boolean => {
+    try {
+      const chat = settingsStore.getSnapshot().chat;
+      return !chat || chat.autoHistory !== false;
+    } catch (error) {
+      return true;
+    }
+  };
+  ctx.effect(() => installChatScrollListeners({ autoHistory: autoHistoryEnabled }), 'project-board: chat scroll listeners');
   ctx.effect(
-    () =>
-      installChatHistoryAutoLoad({
-        enabled: () => {
-          try {
-            const chat = settingsStore.getSnapshot().chat;
-            return !chat || chat.autoHistory !== false;
-          } catch (error) {
-            return true;
-          }
-        }
-      }),
+    () => installChatHistoryAutoLoad({ enabled: autoHistoryEnabled }),
     'project-board: chat history auto-load'
   );
 
@@ -818,6 +813,16 @@ export function apply(ctx: HostContext): void {
           const combo = snap.shortcuts[key as keyof typeof snap.shortcuts];
           const conflict = findBuiltinConflict(combo);
           if (conflict) conflicts.push({ key: key, combo: combo, label: conflict.label });
+        }
+        const owners = new Map<string, string[]>();
+        for (const key of Object.keys(snap.shortcuts || {})) {
+          const combo = snap.shortcuts[key as keyof typeof snap.shortcuts];
+          const list = owners.get(combo);
+          if (list) list.push(key);
+          else owners.set(combo, [key]);
+        }
+        for (const [combo, actions] of owners) {
+          if (actions.length > 1) logEvent('warn', 'shortcuts', 'duplicate binding', { combo: combo, actions: actions });
         }
         if (conflicts.length === 0) return;
         const first = conflicts[0];

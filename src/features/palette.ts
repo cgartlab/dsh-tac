@@ -22,13 +22,28 @@ import { interjectEarliestQueued, scrollToComposerAndFocus } from './interject';
 import type { PaletteSnapshot, PaletteStore } from './header';
 import type { SessionListSnapshot, SessionStatusMap, WorkspaceSnapshot } from '../core/snapshot';
 
-/** Native keydown events carrying the plugin's own "this press was handled" marker. */
-type PluginKeyEvent = KeyboardEvent & {
-  pbxSidebarActed?: boolean;
-  pbxBoardActed?: boolean;
-  pbxPaletteActed?: boolean;
-  pbxHudActed?: boolean;
-};
+/** Native keydown events carrying the plugin's own "this press was handled" markers. */
+type PluginKeyEvent = KeyboardEvent & { pbxSidebarActed?: boolean; pbxBoardActed?: boolean; pbxShortcutActed?: boolean };
+
+/**
+ * One physical press can reach several listeners after a client-plugin hot reload. Actions
+ * with a global side effect — the HUD toggle window event, a hold-scroll loop, a steer click,
+ * focusing the composer, opening a session — would run twice, and a toggle run twice cancels
+ * itself out so the key looks dead. The first listener to act claims the press.
+ *
+ * (The palette store, rename store and session-menu store are per plugin instance, so a stale
+ * listener toggles its own unmounted store: claiming those would make the live instance skip
+ * a press it alone can serve, so they stay unclaimed.)
+ */
+function claimPress(event: PluginKeyEvent): boolean {
+  if (event.pbxShortcutActed === true) return false;
+  try {
+    event.pbxShortcutActed = true;
+  } catch (error) {
+    /* frozen event */
+  }
+  return true;
+}
 
 export interface FocusStore {
   set(patch: { id?: string | null; at?: number }): void;
@@ -318,22 +333,12 @@ export function Palette(props: PaletteProps): unknown {
         return;
       }
       if (matchCombo(event as KeyEventLike, shortcuts.palette)) {
+        /* A disabled palette leaves its combo to the rest of the app instead of swallowing it. */
+        if (settingsRef.current.palette.enabled === false) return;
         event.preventDefault();
         event.stopPropagation();
         stopHoldScroll(false);
-        /* A second live listener (a leaked instance after a client-plugin hot reload) would
-           toggle the same panel twice and cancel itself out. Every toggle-type shortcut needs
-           this handshake, not just the ones that change the host layout. */
-        if (event.pbxPaletteActed === true) {
-          logEvent('info', 'shortcut', 'palette:duplicate', {});
-          return;
-        }
-        try {
-          event.pbxPaletteActed = true;
-        } catch (error) {
-          /* frozen event */
-        }
-        if (settingsRef.current.palette.enabled !== false && palette) palette.toggle('open');
+        if (palette) palette.toggle('open');
         return;
       }
       if (paletteOpenRef.current && matchCombo(event as KeyEventLike, shortcuts.prev)) {
@@ -356,7 +361,10 @@ export function Palette(props: PaletteProps): unknown {
       const isRename = matchCombo(event as KeyEventLike, shortcuts.rename);
       if (isRename) {
         const target = renameRef.current;
-        if (!target || hasBlockingDialog()) return;
+        if (!target || hasBlockingDialog()) {
+          logEvent('debug', 'shortcut', 'rename:blocked', { target: Boolean(target), dialog: hasBlockingDialog() });
+          return;
+        }
         stopHoldScroll(false);
         if (paletteOpenRef.current && palette) palette.set({ open: false });
         event.preventDefault();
@@ -367,7 +375,10 @@ export function Palette(props: PaletteProps): unknown {
       const isSessionMenu = matchCombo(event as KeyEventLike, shortcuts.sessionMenu);
       if (isSessionMenu) {
         const target = renameRef.current;
-        if (!target || hasBlockingDialog()) return;
+        if (!target || hasBlockingDialog()) {
+          logEvent('debug', 'shortcut', 'sessionMenu:blocked', { target: Boolean(target), dialog: hasBlockingDialog() });
+          return;
+        }
         stopHoldScroll(false);
         if (paletteOpenRef.current && palette) palette.set({ open: false });
         event.preventDefault();
@@ -376,6 +387,12 @@ export function Palette(props: PaletteProps): unknown {
         return;
       }
       if (isSidebarBoard || isPanelHalf || isPanelFull) {
+        /* A disabled board must not answer its shortcuts: opening the right panel would only
+           show the "board is disabled" placeholder, and the capsule that normally reaches the
+           board is hidden in that state too. Leave the combo to the rest of the app, exactly
+           like a disabled palette. */
+        const boardSettings = settingsRef.current && settingsRef.current.board;
+        if (boardSettings && boardSettings.enabled === false) return;
         event.preventDefault();
         event.stopPropagation();
         stopHoldScroll(false);
@@ -429,16 +446,9 @@ export function Palette(props: PaletteProps): unknown {
         event.preventDefault();
         event.stopPropagation();
         stopHoldScroll(false);
-        /* Same duplicate-listener handshake as the palette and the layout toggles: two runs of
-           this branch would collapse the HUD and expand it again on one keypress. */
-        if (event.pbxHudActed === true) {
+        if (!claimPress(event)) {
           logEvent('info', 'shortcut', 'hud:duplicate', {});
           return;
-        }
-        try {
-          event.pbxHudActed = true;
-        } catch (error) {
-          /* frozen event */
         }
         if (typeof props.toggleHud === 'function') props.toggleHud();
         return;
@@ -452,6 +462,10 @@ export function Palette(props: PaletteProps): unknown {
         event.preventDefault();
         event.stopPropagation();
         stopHoldScroll(false);
+        if (!claimPress(event)) {
+          logEvent('info', 'shortcut', 'interject:duplicate', {});
+          return;
+        }
         const acted = interjectEarliestQueued();
         if (!acted && typeof props.notify === 'function') {
           props.notify({ tone: 'warn', title: '', message: t('toast.interjectNone') });
@@ -467,6 +481,10 @@ export function Palette(props: PaletteProps): unknown {
         }
         event.preventDefault();
         event.stopPropagation();
+        if (!claimPress(event)) {
+          logEvent('info', 'shortcut', 'hold:duplicate', {});
+          return;
+        }
         beginHoldScroll(isUserNext ? 1 : -1, event.code);
         return;
       }
@@ -478,6 +496,10 @@ export function Palette(props: PaletteProps): unknown {
         event.preventDefault();
         event.stopPropagation();
         stopHoldScroll(false);
+        if (!claimPress(event)) {
+          logEvent('info', 'shortcut', 'scrollBottom:duplicate', {});
+          return;
+        }
         scrollToComposerAndFocus();
         return;
       }
@@ -493,6 +515,10 @@ export function Palette(props: PaletteProps): unknown {
         if (active.length === 0) return;
         event.preventDefault();
         event.stopPropagation();
+        if (!claimPress(event)) {
+          logEvent('info', 'shortcut', 'cycle:duplicate', {});
+          return;
+        }
         const position = active.findIndex((row) => row.id === cycle.current);
         const count = active.length;
         const next = isNext ? (position < 0 ? 0 : (position + 1) % count) : position < 0 ? count - 1 : (position - 1 + count) % count;
@@ -510,6 +536,16 @@ export function Palette(props: PaletteProps): unknown {
     document.addEventListener('keydown', onShortcut, true);
     return () => document.removeEventListener('keydown', onShortcut, true);
   }, [palette]);
+
+  /* The palette is modal and owns the keyboard from the moment it opens. A held scroll can be
+     opened by the mouse (the capsule, a shortcut that was already released mid-frame), and the
+     release key may never reach the plugin while the search field has focus — the conversation
+     would keep moving behind the panel. Stop it here rather than relying on the keyup. */
+  useEffect(() => {
+    if (!state.open) return undefined;
+    stopHoldScroll(false);
+    return undefined;
+  }, [state.open]);
 
   if (!mounted) return null;
   const close = (): void => {

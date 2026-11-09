@@ -11,7 +11,7 @@ export const LOG_KEY = 'pbx.logs.v1';
 
 export const HUD_POS_KEY = 'pbx.hud.pos';
 export const HUD_STARTS_KEY = 'pbx.hud.starts';
-export const HUD_COLLAPSE_KEY = 'pbx.hud.collapse';
+export const HUD_COLLAPSE_KEY = 'pbx.hud.collapsed';
 /** Width the board pane was last left at; also cleared by "restore defaults". */
 export const BOARD_WIDTH_KEY = 'pbx.board.width';
 

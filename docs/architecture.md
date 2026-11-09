@@ -83,12 +83,47 @@ each action (see `DEFAULT_SETTINGS.shortcuts`). It is registered on mount and ga
 - an open dialog (`aria-modal="true"` present);
 - an open command palette.
 
+While the palette is open its own keys keep working (`Alt+K` closes it, `Alt+I` / `Alt+,` move
+the selection, `Enter` opens, `Esc` closes); the layout and dialog shortcuts — rename, session
+menu, board (`Alt+N` / `Alt+B` / `Alt+V`) and the left sidebar (`Alt+W`) — dismiss the palette
+first and then act once; every other combo (HUD, interject, hold-scroll, scroll-to-bottom, the
+session cycle) is consumed and ignored without touching its feature, so no macOS Option
+character leaks into the page. A host dialog (any `aria-modal` element that is not
+the palette) blocks every shortcut *without* consuming it, leaving the key to the dialog. The
+narrow-window sidebar drawer (`data-shortcut-modal="sidebar"`) is exempt from that block: DSH
+keeps its own toggle alive in that state, so `Alt+W` must be able to close the drawer it opens.
+
+One physical press acts once. Actions with a global side effect — the HUD toggle window event,
+a hold-scroll loop, a steer click, focus/scroll-to-bottom, opening a session from the cycle —
+claim the event with `pbxShortcutActed`. The board and sidebar keep their own
+`pbxBoardActed` / `pbxSidebarActed` markers because their log lines separate the two cases.
+A leaked listener from a hot reload therefore acts at most once per press; the palette, rename
+and session-menu stores are per plugin instance, so a stale listener toggles its own unmounted
+store and those actions are deliberately *not* claimed.
+
 Hold-to-scroll (`Alt+U` / `Alt+M`) starts a `requestAnimationFrame` loop that resolves the
 live chat scroller each frame, prefetches older history when approaching the top, and
 falls back to anchor scrolling when a position write is reverted by the chat view. It
 sends one synthetic wheel signal before the first write because DSH can hold a preserved
 scroll anchor that would otherwise pull the view back every frame, and holding down to the
 bottom focuses the composer.
+
+### Settings that own a shortcut path
+
+Every setting that can make a shortcut *look broken* is checked in one place. The rule is
+"the setting gates the path": when the feature is off, the combo is either left to the rest of
+the app or turned into a clean no-op — never a half-working surface.
+
+| Setting | Who honours it | Behaviour when off |
+| --- | --- | --- |
+| `palette.enabled` | dispatcher, before the palette branch | `Alt+K` is not consumed (the key is left to the app) |
+| `board.enabled` | dispatcher, before the board branch | `Alt+N` / `Alt+B` / `Alt+V` are not consumed; the capsule entry is hidden too |
+| `chat.autoHistory` | passive `installChatHistoryAutoLoad` **and** the hold loop's `requestOlder` (one getter injected from `apply`) | a held `Alt+U` stops at the boundary instead of clicking «load earlier»; a single tap still loads one page, because that is an explicit press |
+| `palette.includeArchived` | palette row builder | archived sessions disappear from the list reachable from `Alt+K` |
+| `hud.enabled` | HUD toggle handler — deliberately the opposite direction | `Alt+E` turns the list back **on** (there is no other affordance once it is hidden); this is the one switch a shortcut is allowed to flip |
+
+Two of these were real bugs found by asserting the table rather than reading it: `board.enabled`
+and `chat.autoHistory` only gated the passive/UI paths and not the shortcut path.
 
 ### macOS labels and top clearance
 
@@ -213,6 +248,8 @@ the conversation area) and plays a WebAudio chime; otherwise it uses the system
 | `shortcut` | `leftSidebar:blocked` | a real modal dialog owned the keystroke |
 | `shortcut` | `leftSidebar:duplicate` | a leaked listener from a hot reload already handled this press |
 | `shortcut` | `leftSidebar:acted` | the action ran; `acted:false` means the handler was not wired |
+| `shortcut` | `rename:blocked` / `sessionMenu:blocked` | debug level: the combo matched but there was no current session (`target:false`) or a modal owned the press (`dialog:true`) |
+| `shortcut` | `hold:no-chat` / `scrollBottom:no-chat` / `userJump:no-target` | debug level: the combo matched but there was no chat scroller, no history target, or nothing to scroll to |
 | `sidebar` | `toggle` | which layout API answered (`layout.toggleSidebar` and friends) |
 | `sidebar` | `applied` / `no-change` | the frame's grid track and collapsed flag moved, or did not |
 | `sidebar` | `leave-fullscreen` | a fullscreen right panel was dismissed first, so the sidebar is visible |
@@ -222,4 +259,12 @@ The frame itself is the source of truth for "is the sidebar open": DSH renders i
 inline `grid-template-columns` whose first track is the sidebar column (0 closed, ~52 rail,
 280 expanded) and a `data-sidebar-collapsed` attribute. Those describe the target state and
 change on the same frame as the key press, unlike the column's animated width.
+
+Docking keeps the pill's own vertical spot and slides it to the sidebar column's right edge
+(`edge + 8`), and remembers the spot to restore it. That reposition only applies to a list the
+user has moved: a list still at its configured default anchor (`top-right` / `bottom-right`)
+keeps its CSS anchor and is merely collapsed, because sliding a default-anchored pill across
+the screen and back would be pure noise. `readExpanded()` prefers the frame's target grid
+template, so tests must put a value (not the whole `grid-template-columns: …` declaration) in
+`element.style.gridTemplateColumns` or they exercise the measured-width fallback instead.
 

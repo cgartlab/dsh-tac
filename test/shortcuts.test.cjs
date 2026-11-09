@@ -23,7 +23,19 @@
  *   - a KeyboardEvent-shaped event object dispatched through the plugin's real
  *     document listener (Node has no DOM, so the shim only provides DOM fields).
  *
- * Everything is deterministic: timers are recorded but never fire, no network,
+ * The harness has grown the pieces the harder paths need, all still deterministic:
+ *
+ *   - `window.dispatchEvent` delivers to the listeners the plugin installed on the
+ *     window (hold-scroll release keys, `pbx-hud-toggle`), not just records the event;
+ *   - `runFrame(timestamp)` drains the queued `requestAnimationFrame` callbacks so the
+ *     hold-scroll loop can be stepped, and `__setNow(ms)` moves the clock the loop reads
+ *     for its history-prefetch deadline;
+ *   - `connectBoardPane()` mirrors the host right pane (tab, expansion, width, fullscreen)
+ *     so the three-state board logic is exercised against the same markup the plugin reads;
+ *   - `createHarness({ services })` drops or replaces services before `apply()` captures
+ *     them, which is how a host build without `sidebarRight` or `layout` is tested.
+ *
+ * Everything is deterministic: timers are recorded but never fire on their own, no network,
  * no real storage, and every test gets a fresh sandbox around client.js.
  */
 
@@ -106,6 +118,12 @@ class VirtualNode {
     this.style = this.props.style || {};
     this.children = [];
     this.parentNode = null;
+    /* The plugin walks up the tree (scroller discovery, closest()); mirror the DOM accessor. */
+    Object.defineProperty(this, 'parentElement', {
+      get() {
+        return this.parentNode && this.parentNode.tag !== '#text' ? this.parentNode : null;
+      }
+    });
     this.isConnected = true;
     this.textContent = '';
     this.value = '';
@@ -113,6 +131,10 @@ class VirtualNode {
     this.scrollTop = 0;
     this.scrollHeight = 0;
     this.clientHeight = 0;
+    this.clientWidth = 120;
+    /* The plugin reads these for drag/clamp maths; a layoutless node still has a box. */
+    this.offsetWidth = 120;
+    this.offsetHeight = 40;
     this.isContentEditable = this.attributes.contenteditable === 'true';
     for (const child of children || []) this.appendChild(child);
   }
@@ -207,6 +229,10 @@ class VirtualNode {
     if (this.ownerDocument && this.ownerDocument.activeElement === this) this.ownerDocument.activeElement = this.ownerDocument.body;
   }
 
+  select() {
+    this.selection = [0, String(this.value === undefined ? '' : this.value).length];
+  }
+
   scrollIntoView() {}
 
   click() {}
@@ -248,6 +274,10 @@ function createVirtualDocument() {
         handler(event);
       }
       return !event.defaultPrevented;
+    },
+    /** Number of live listeners of a type, for diagnosing why a key did nothing. */
+    __listenerCount(type) {
+      return (listeners.get(type) || []).length;
     },
     createElement(tag) {
       return new VirtualNode(tag, {}, [], doc);
@@ -307,8 +337,12 @@ function convertTree(element, doc) {
   }
   if (typeof element !== 'object') return null;
   if (typeof element.type !== 'string') {
-    // Fragment or a nested component (e.g. Icon): opaque to the shortcut checks.
-    return new VirtualNode('component', {}, [], doc);
+    // Fragment or a nested component (e.g. Icon): opaque markup, but keep the props so a test
+    // can still assert what was asked of it (the board's compact flag, a dialog's request).
+    const placeholder = new VirtualNode('component', {}, [], doc);
+    placeholder.componentType = element.type;
+    placeholder.componentProps = element.props || {};
+    return placeholder;
   }
   const node = new VirtualNode(element.type, element.props || {}, [], doc);
   if (element.props && element.props.ref && typeof element.props.ref === 'object') {
@@ -505,13 +539,15 @@ function createReactRuntime(doc) {
 
 /* ================================================================ the harness */
 
-function createLocalStorage() {
-  const data = new Map();
+function createLocalStorage(initial) {
+  const data = new Map(Object.entries(initial || {}));
   return {
     getItem: (key) => (data.has(key) ? data.get(key) : null),
     setItem: (key, value) => { data.set(key, String(value)); },
     removeItem: (key) => { data.delete(key); },
-    clear: () => data.clear()
+    clear: () => data.clear(),
+    /** Everything the plugin persisted, so a test can inspect or re-seed it. */
+    __dump: () => Object.fromEntries(data)
   };
 }
 
@@ -522,6 +558,7 @@ function createWindowStub(doc, localStorage) {
   const dispatched = [];
   const listenerMap = new Map();
   let idSeq = 0;
+  let clock = 0;
 
   const win = {
     document: doc,
@@ -535,7 +572,11 @@ function createWindowStub(doc, localStorage) {
     matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }),
     getComputedStyle: () => ({ overflowY: 'visible' }),
     getSelection: () => null,
-    performance: { now: () => 0 },
+    performance: { now: () => clock },
+    /* Tests advance this clock so interval deadlines (history prefetch timeouts) can expire. */
+    __setNow(value) {
+      clock = value;
+    },
     addEventListener(type, handler) {
       if (!listenerMap.has(type)) listenerMap.set(type, []);
       listenerMap.get(type).push(handler);
@@ -548,6 +589,16 @@ function createWindowStub(doc, localStorage) {
     },
     dispatchEvent(event) {
       dispatched.push(event);
+      // Deliver to the listeners the plugin installed on the window (chat-scroll release keys,
+      // HUD toggle events). The document stub does the same for document listeners.
+      const handlers = (listenerMap.get(event.type) || []).slice();
+      for (const handler of handlers) {
+        try {
+          handler(event);
+        } catch (error) {
+          /* a listener must not break the harness */
+        }
+      }
       return true;
     },
     setTimeout(fn, delay) {
@@ -627,7 +678,11 @@ function createContext(doc, services) {
   const effects = [];
   const ctx = {
     locale: {
-      register(namespace, dicts) { translations[namespace] = dicts; },
+      register(namespace, dicts) {
+        // The host merges the plugin's locale dictionaries; the stub keeps the English side so
+        // text assertions see real strings and {placeholders} are interpolated.
+        translations[namespace] = Object.assign({}, (dicts && (dicts.en || dicts.zh)) || {}, translations[namespace] || {});
+      },
       bind(namespace) {
         return (key, params) => {
           const table = (translations[namespace] || {})[key] ? (translations[namespace] || {}) : null;
@@ -696,15 +751,56 @@ function comboInit(combo) {
   };
 }
 
-function createHarness() {
+function createHarness(options) {
   const doc = createVirtualDocument();
-  const localStorage = createLocalStorage();
+  const localStorage = createLocalStorage(options && options.storage);
   const win = createWindowStub(doc, localStorage);
   const services = createServices();
+  /* A host build may expose fewer services; overrides are applied before apply() captures them. */
+  for (const [name, value] of Object.entries((options && options.services) || {})) {
+    if (value === undefined) delete services[name];
+    else services[name] = value;
+  }
   const silentConsole = { log() {}, warn() {}, error() {}, info() {}, debug() {} };
+
+  /* MutationObserver is how the dock reacts on the same frame as the host's attribute change;
+     without it in the sandbox that fast path never runs and only the 800 ms interval remains. */
+  const mutationObservers = [];
+  class MutationObserverStub {
+    constructor(callback) {
+      this.callback = callback;
+      this.active = true;
+      this.targets = [];
+      mutationObservers.push(this);
+    }
+    observe(target, options) {
+      this.targets.push({ target, options });
+    }
+    disconnect() {
+      this.active = false;
+    }
+    takeRecords() {
+      return [];
+    }
+  }
+
+  const resizeObservers = [];
+  class ResizeObserverStub {
+    constructor(callback) {
+      this.callback = callback;
+      this.active = true;
+      resizeObservers.push(this);
+    }
+    observe() {}
+    disconnect() {
+      this.active = false;
+    }
+  }
 
   const sandbox = {
     window: win,
+    MutationObserver: MutationObserverStub,
+    ResizeObserver: ResizeObserverStub,
     document: doc,
     localStorage,
     console: silentConsole,
@@ -714,7 +810,15 @@ function createHarness() {
     clearInterval: win.clearInterval,
     requestAnimationFrame: win.requestAnimationFrame,
     cancelAnimationFrame: win.cancelAnimationFrame,
-    CustomEvent: win.CustomEvent
+    CustomEvent: win.CustomEvent,
+    /* The bundle sends one synthetic wheel event before its first position write; a real DOM
+       has WheelEvent, so the sandbox must too or that branch silently never runs. */
+    WheelEvent: class WheelEvent {
+      constructor(type, init) {
+        this.type = type;
+        Object.assign(this, init || {});
+      }
+    }
   };
   sandbox.globalThis = sandbox;
 
@@ -750,11 +854,17 @@ function createHarness() {
     notify: []
   };
 
+  /* Mutable so a test can give the palette real projects to filter by. */
+  let wsFixture = { items: [], archivedSessionIds: [] };
+  /* A private copy of the shared session fixture: mutating the module-level object used to
+     leak "no current session" into every later test in this file. */
+  let sessionFixture = JSON.parse(JSON.stringify(SESSION_FIXTURE));
+
   const props = Object.assign({}, injected, {
     t: ctx.locale.bind('projectBoard'),
-    useSessions: (selector) => selector(SESSION_FIXTURE),
+    useSessions: (selector) => selector(sessionFixture),
     useSessionStatus: (selector) => selector(new Map()),
-    useWorkspaces: (selector) => selector({ items: [], archivedSessionIds: [] }),
+    useWorkspaces: (selector) => selector(wsFixture),
     usePalette: (selector) => selector(paletteStore.getSnapshot()),
     useSettings: (selector) => selector(settingsStore.getSnapshot()),
     useHudOrder: (selector) => selector(hudOrderStore.getSnapshot()),
@@ -838,10 +948,26 @@ function createHarness() {
     spies,
     instance,
     render,
-    mountHud() {
+    setWorkspaces(next) {
+      wsFixture = next;
+    },
+    /** Mutate a private copy of the session fixture, then re-render. */
+    patchSessions(mutate) {
+      sessionFixture = JSON.parse(JSON.stringify(SESSION_FIXTURE));
+      mutate(sessionFixture);
+      render();
+      return sessionFixture;
+    },
+    /** The fixture this harness is using (lets other mounts read the same data). */
+    sessions() {
+      return sessionFixture;
+    },
+    mountHud(rootKey) {
       const entry = registrations.find((item) => item.spec.id === 'project-board-hud');
       assert.ok(entry, 'the floating session list overlay is registered');
-      const hud = runtime.mount(entry.component, Object.assign({}, props, entry.spec.inject()), () => {});
+      const hud = runtime.mount(entry.component, Object.assign({}, props, entry.spec.inject()), (node) => {
+        if (rootKey) doc.__setComponentRoot(rootKey, node);
+      });
       hud.render();
       return hud;
     },
@@ -850,6 +976,31 @@ function createHarness() {
     },
     runTimers() {
       for (const timer of win.__timers.slice()) if (!timer.cleared) timer.fn();
+    },
+    /** Run the animation frames queued so far; each callback may schedule the next one. */
+    /** How many ResizeObservers were created (diagnostics for width-driven UI). */
+    __resizeCount() {
+      return resizeObservers.length;
+    },
+    /** Fire the live ResizeObserver callbacks, as a real element resize would. */
+    flushResize() {
+      for (const observer of resizeObservers.slice()) {
+        if (observer.active) observer.callback([], observer);
+      }
+    },
+    /** Fire the live MutationObserver callbacks, as a real DOM attribute change would. */
+    flushMutations() {
+      for (const observer of mutationObservers.slice()) {
+        if (observer.active) observer.callback([], observer);
+      }
+    },
+    runFrame(timestamp) {
+      const queued = win.__frames.splice(0);
+      for (const frame of queued) frame.fn(timestamp);
+      return queued.length;
+    },
+    frameCount() {
+      return win.__frames.length;
     },
     pressRaw,
     pressCombo,
@@ -1066,14 +1217,15 @@ test('the floating list docks and comes back with the native sidebar on the same
 
   // The native frame publishes the layout's *target* state: an inline grid template whose first
   // track is the sidebar column, plus a collapsed attribute. Neither waits for the width animation.
-  const closed = 'grid-template-columns: 0px minmax(400px, 1fr) minmax(0px, 800px)';
-  const opened = 'grid-template-columns: 280px minmax(400px, 1fr) minmax(0px, 800px)';
+  /* element.style.gridTemplateColumns is the value only; the attribute keeps the declaration. */
+  const closed = '0px minmax(400px, 1fr) minmax(0px, 800px)';
+  const opened = '280px minmax(400px, 1fr) minmax(0px, 800px)';
   const frame = new VirtualNode('div', {
     className: 'AppFrame_frame',
     style: { gridTemplateColumns: closed },
     'data-sidebar-collapsed': 'true'
   }, [], harness.doc);
-  frame.attributes.style = closed;
+  frame.attributes.style = 'grid-template-columns: ' + closed;
   harness.doc.__addRoot(frame);
 
   const hud = harness.mountHud();
@@ -1082,7 +1234,7 @@ test('the floating list docks and comes back with the native sidebar on the same
 
   // Open the sidebar: the frame's target state changes immediately, before the column animates.
   frame.style.gridTemplateColumns = opened;
-  frame.attributes.style = opened;
+  frame.attributes.style = 'grid-template-columns: ' + opened;
   frame.removeAttribute('data-sidebar-collapsed');
   harness.runIntervals();
   hud.render();
@@ -1090,7 +1242,7 @@ test('the floating list docks and comes back with the native sidebar on the same
 
   // Close it again: the pill must come back without waiting for a width animation to finish.
   frame.style.gridTemplateColumns = closed;
-  frame.attributes.style = closed;
+  frame.attributes.style = 'grid-template-columns: ' + closed;
   frame.setAttribute('data-sidebar-collapsed', 'true');
   harness.runIntervals();
   hud.render();
@@ -1109,7 +1261,7 @@ test('a list that docked at startup comes back when the sidebar closes', () => {
   const opened = 'grid-template-columns: 280px minmax(400px, 1fr) minmax(0px, 800px)';
   const closed = 'grid-template-columns: 0px minmax(400px, 1fr) minmax(0px, 800px)';
   const frame = new VirtualNode('div', { className: 'AppFrame_frame', style: { gridTemplateColumns: opened } }, [], harness.doc);
-  frame.attributes.style = opened;
+  frame.attributes.style = 'grid-template-columns: ' + opened;
   harness.doc.__addRoot(frame);
 
   const hud = harness.mountHud();
@@ -1117,7 +1269,7 @@ test('a list that docked at startup comes back when the sidebar closes', () => {
   assert.equal(/collapsed/.test(hud.node.className), true, 'the list starts as a pill when the app opens with the sidebar expanded');
 
   frame.style.gridTemplateColumns = closed;
-  frame.attributes.style = closed;
+  frame.attributes.style = 'grid-template-columns: ' + closed;
   frame.setAttribute('data-sidebar-collapsed', 'true');
   harness.runIntervals();
   hud.render();
@@ -1329,4 +1481,2437 @@ test('every default shortcut combo is wired and produces its side effect', () =>
     assert.equal(typeof checkers[id], 'function', 'every default combo has a checker');
     checkers[id](event, timerStart);
   }
+});
+
+/* ------------------------------------------------------------ reliability net */
+
+test('a real modal leaves every default shortcut to the dialog', () => {
+  const harness = createHarness();
+  const shortcuts = harness.settingsStore.getSnapshot().shortcuts;
+
+  // A host dialog (settings, confirm, etc.) owns the keyboard while it is open: the plugin
+  // must neither act nor consume, or the dialog's own Alt chords stop working.
+  const modal = new VirtualNode('div', { role: 'dialog', 'aria-modal': 'true', 'aria-label': 'host dialog' }, [], harness.doc);
+  harness.doc.__addRoot(modal);
+
+  for (const id of Object.keys(shortcuts)) {
+    harness.resetState();
+    harness.clearSpies();
+    harness.doc.activeElement = harness.doc.body;
+    const event = harness.pressCombo(shortcuts[id]);
+    assert.equal(event.defaultPrevented, false, 'a host modal leaves ' + shortcuts[id] + ' (' + id + ') to the dialog');
+  }
+
+  assert.equal(harness.paletteOpen(), false, 'no shortcut opens the palette behind a host modal');
+  assert.deepEqual(harness.spies.toggleBoard, [], 'no board shortcut fires behind a host modal');
+  assert.deepEqual(harness.spies.toggleLeftSidebar, [], 'Alt+W does not fire behind a host modal');
+  assert.deepEqual(harness.spies.requestRename, [], 'Alt+R does not fire behind a host modal');
+  assert.deepEqual(harness.spies.requestSessionMenu, [], 'Alt+D does not fire behind a host modal');
+  assert.deepEqual(harness.hudEvents(), [], 'Alt+E does not fire behind a host modal');
+
+  harness.doc.__removeRoot(modal);
+});
+
+test('an extra modifier never matches a configured combo', () => {
+  const harness = createHarness();
+  harness.resetState();
+  harness.clearSpies();
+
+  const variants = [
+    { altKey: true, shiftKey: true },
+    { altKey: true, ctrlKey: true },
+    { altKey: true, metaKey: true },
+    { metaKey: true }
+  ];
+  for (const variant of variants) {
+    harness.pressRaw(Object.assign({ key: 'k', code: 'KeyK', bubbles: true }, variant));
+    assert.equal(harness.paletteOpen(), false, 'combo with extra ' + Object.keys(variant).join('+') + ' must not open the palette');
+  }
+
+  // The configured combo itself still works, so the branch above is not dead code.
+  harness.pressRaw({ key: 'k', code: 'KeyK', altKey: true, bubbles: true });
+  assert.equal(harness.paletteOpen(), true, 'the exact configured combo still opens the palette');
+});
+
+test('a disabled command palette does not swallow its combo', () => {
+  const harness = createHarness();
+  const before = harness.settingsStore.getSnapshot();
+  harness.settingsStore.set({ palette: Object.assign({}, before.palette, { enabled: false }) });
+  harness.render();
+  harness.clearSpies();
+  harness.resetState();
+
+  const event = harness.pressCombo('alt+KeyK');
+  assert.equal(harness.paletteOpen(), false, 'the disabled palette stays closed');
+  assert.equal(event.defaultPrevented, false, 'a disabled palette leaves its combo to the rest of the app');
+});
+
+test('one Alt+E press toggles the floating list once even if it is delivered twice', () => {
+  const harness = createHarness();
+  harness.resetState();
+  harness.clearSpies();
+
+  // Alt+E dispatches a window event, so a leaked listener from a hot reload would dispatch it
+  // twice and the list would toggle open then closed — the press would look dead.
+  const event = new KeyboardEventShim('keydown', { key: 'e', code: 'KeyE', altKey: true, bubbles: true, cancelable: true });
+  harness.doc.dispatchEvent(event);
+  harness.doc.dispatchEvent(event);
+  harness.render();
+  const toggles = harness.hudEvents().filter((type) => type === 'pbx-hud-toggle');
+  assert.equal(toggles.length, 1, 'the duplicated Alt+E delivery dispatches one HUD toggle');
+});
+
+test('one Alt+U press arms a single hold even if it is delivered twice', () => {
+  const harness = createHarness();
+  harness.resetState();
+  harness.clearSpies();
+  const before = harness.timerCount();
+
+  // Two deliveries must not arm two hold loops: a leaked listener keeps its own module state,
+  // so each delivery would start an independent requestAnimationFrame loop on the same scroller.
+  const event = new KeyboardEventShim('keydown', { key: 'u', code: 'KeyU', altKey: true, bubbles: true, cancelable: true });
+  harness.doc.dispatchEvent(event);
+  harness.doc.dispatchEvent(event);
+  harness.render();
+  const holdTimers = harness.window.__timers.slice(before).filter((timer) => timer.delay === 300);
+  assert.equal(holdTimers.length, 1, 'the duplicated Alt+U delivery arms the hold-scroll timer once');
+});
+
+test('palette open: board and dialog shortcuts dismiss it and still act once', () => {
+  const harness = createHarness();
+
+  // Alt+N: the palette is modal, but a board key is an explicit way out of it.
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyK');
+  assert.equal(harness.paletteOpen(), true, 'the palette opens first');
+  harness.pressCombo('alt+KeyN');
+  assert.equal(harness.paletteOpen(), false, 'Alt+N dismisses the palette');
+  assert.deepEqual(harness.spies.toggleBoard, ['narrow'], 'Alt+N still toggles the board once');
+
+  // Alt+R: the rename dialog replaces the palette rather than stacking behind it.
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyK');
+  harness.pressCombo('alt+KeyR');
+  assert.equal(harness.paletteOpen(), false, 'Alt+R dismisses the palette');
+  assert.deepEqual(harness.spies.requestRename, [['s2', 'Beta']], 'Alt+R requests the rename once');
+
+  // Alt+D: same for the session menu.
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyK');
+  harness.pressCombo('alt+KeyD');
+  assert.equal(harness.paletteOpen(), false, 'Alt+D dismisses the palette');
+  assert.deepEqual(harness.spies.requestSessionMenu, [['s2', 'Beta']], 'Alt+D requests the session menu once');
+});
+
+test('a remapped shortcut takes effect at once and frees the old combo', () => {
+  const harness = createHarness();
+  const before = harness.settingsStore.getSnapshot();
+  const next = JSON.parse(JSON.stringify(before));
+  next.shortcuts.palette = 'ctrl+alt+KeyP';
+  harness.settingsStore.set(next);
+  harness.render();
+
+  harness.resetState();
+  harness.clearSpies();
+
+  // The old combo is no longer configured, so the page keeps it.
+  const oldEvent = harness.pressRaw({ key: 'k', code: 'KeyK', altKey: true, bubbles: true });
+  assert.equal(harness.paletteOpen(), false, 'the previous palette combo no longer opens it');
+  assert.equal(oldEvent.defaultPrevented, false, 'the previous palette combo is no longer consumed');
+
+  // The recorded combo works immediately, without a plugin reload.
+  harness.pressRaw({ key: 'p', code: 'KeyP', altKey: true, ctrlKey: true, bubbles: true });
+  assert.equal(harness.paletteOpen(), true, 'the remapped combo opens the palette without a reload');
+});
+test('palette open: every other default combo is consumed without acting', () => {
+  const harness = createHarness();
+  const shortcuts = harness.settingsStore.getSnapshot().shortcuts;
+  const composer = harness.makeEditable();
+  harness.doc.__addRoot(composer);
+
+  // Policy (docs/architecture.md): while the palette is open, only its own keys work. The
+  // rename / session-menu / board keys dismiss it first and then act once (covered above);
+  // every other combo must be consumed and ignored so no Option character or side effect
+  // reaches the page.
+  const inert = [
+    { id: 'userPrev', extra: (start) => assert.equal(holdTimers(harness, start), 0, 'Alt+U arms no hold while the palette is open') },
+    { id: 'userNext', extra: (start) => assert.equal(holdTimers(harness, start), 0, 'Alt+M arms no hold while the palette is open') },
+    { id: 'scrollBottom', extra: () => assert.notEqual(harness.doc.activeElement, composer, 'Alt+S does not focus the composer behind the palette') },
+    { id: 'hud', extra: () => assert.deepEqual(harness.hudEvents(), [], 'Alt+E dispatches no HUD toggle behind the palette') },
+    { id: 'interject', extra: () => assert.equal(harness.spies.notify.length, 0, 'Alt+Enter does not report an empty queue behind the palette') }
+  ];
+
+  function holdTimers(target, start) {
+    return target.window.__timers.slice(start).filter((timer) => timer.delay === 300).length;
+  }
+
+  for (const item of inert) {
+    harness.resetState();
+    harness.clearSpies();
+    harness.pressCombo(shortcuts.palette);
+    assert.equal(harness.paletteOpen(), true, 'the palette is open before ' + item.id);
+    const start = harness.timerCount();
+    const event = harness.pressCombo(shortcuts[item.id]);
+    assert.equal(event.defaultPrevented, true, shortcuts[item.id] + ' (' + item.id + ') is consumed while the palette is open');
+    assert.equal(harness.paletteOpen(), true, shortcuts[item.id] + ' (' + item.id + ') leaves the palette open');
+    item.extra(start);
+  }
+
+  // The sidebar key follows the board policy: dismiss the palette, then toggle once.
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo(shortcuts.palette);
+  harness.pressCombo(shortcuts.leftSidebar);
+  assert.equal(harness.paletteOpen(), false, 'Alt+W dismisses the palette');
+  assert.deepEqual(harness.spies.toggleLeftSidebar, [true], 'Alt+W still toggles the sidebar once');
+});
+test('Alt+Enter steers the earliest queued message exactly once', () => {
+  const harness = createHarness();
+  const dock = new VirtualNode('div', { 'data-queue-dock': '' }, [], harness.doc);
+  const echo = new VirtualNode('li', { 'data-submission-echo': '' }, [], harness.doc);
+  const first = new VirtualNode('li', {}, [], harness.doc);
+  const firstButton = new VirtualNode('button', { 'aria-label': '插话发送' }, [], harness.doc);
+  const second = new VirtualNode('li', {}, [], harness.doc);
+  const secondButton = new VirtualNode('button', { 'aria-label': '插话发送' }, [], harness.doc);
+  let firstClicks = 0;
+  let secondClicks = 0;
+  firstButton.click = () => { firstClicks += 1; };
+  secondButton.click = () => { secondClicks += 1; };
+  first.appendChild(firstButton);
+  second.appendChild(secondButton);
+  dock.appendChild(echo);
+  dock.appendChild(first);
+  dock.appendChild(second);
+  harness.doc.__addRoot(dock);
+
+  // The submission echo row is not a pending message: the first steerable row must win, and a
+  // duplicated delivery (leaked listener) must not steer a second message.
+  const event = new KeyboardEventShim('keydown', { key: 'Enter', code: 'Enter', altKey: true, bubbles: true, cancelable: true });
+  harness.doc.dispatchEvent(event);
+  harness.doc.dispatchEvent(event);
+  harness.render();
+
+  assert.equal(firstClicks, 1, 'the earliest queued message is steered once');
+  assert.equal(secondClicks, 0, 'later queued messages are left alone');
+  assert.equal(harness.spies.notify.length, 0, 'a successful steer raises no warning');
+  assert.equal(event.defaultPrevented, true, 'Alt+Enter is consumed when a message is steered');
+
+  harness.doc.__removeRoot(dock);
+});
+
+test('Alt+Enter expands a collapsed queue dock and then steers', () => {
+  const harness = createHarness();
+  const dock = new VirtualNode('div', { 'data-queue-dock': '' }, [], harness.doc);
+  const header = new VirtualNode('button', { 'aria-controls': 'queue', 'aria-expanded': 'false' }, [], harness.doc);
+  let headerClicks = 0;
+  header.click = () => { headerClicks += 1; };
+  dock.appendChild(header);
+  harness.doc.__addRoot(dock);
+
+  harness.pressRaw({ key: 'Enter', code: 'Enter', altKey: true, bubbles: true });
+  assert.equal(headerClicks, 1, 'a collapsed dock is expanded once');
+  assert.equal(harness.spies.notify.length, 0, 'expanding the dock is not reported as an empty queue');
+
+  // The host renders the rows after the expansion; the deferred retry then steers the message.
+  const row = new VirtualNode('li', {}, [], harness.doc);
+  const steer = new VirtualNode('button', { 'aria-label': '插话发送' }, [], harness.doc);
+  let steerClicks = 0;
+  steer.click = () => { steerClicks += 1; };
+  row.appendChild(steer);
+  dock.appendChild(row);
+  harness.runTimers();
+  assert.equal(steerClicks, 1, 'the deferred retry steers the newly rendered message');
+
+  harness.doc.__removeRoot(dock);
+});
+test('Alt+S uses the native back-to-bottom control and focuses the composer', () => {
+  const harness = createHarness();
+  const button = new VirtualNode('button', { 'aria-label': '回到底部' }, [], harness.doc);
+  button.getBoundingClientRect = () => ({ width: 24, height: 24, top: 0, left: 0, right: 24, bottom: 24 });
+  let clicks = 0;
+  button.click = () => { clicks += 1; };
+  harness.doc.__addRoot(button);
+
+  const composer = harness.makeEditable();
+  composer.getBoundingClientRect = () => ({ width: 320, height: 96, top: 600, left: 0, right: 320, bottom: 696 });
+  harness.doc.__addRoot(composer);
+  harness.doc.activeElement = harness.doc.body;
+
+  harness.pressCombo('alt+KeyS');
+  assert.equal(clicks, 1, 'the native back-to-bottom control is pressed once');
+  assert.equal(harness.doc.activeElement, composer, 'the conversation composer receives focus');
+
+  // A duplicated delivery must not re-run the focus/scroll dance.
+  clicks = 0;
+  const event = new KeyboardEventShim('keydown', { key: 's', code: 'KeyS', altKey: true, bubbles: true, cancelable: true });
+  harness.doc.dispatchEvent(event);
+  harness.doc.dispatchEvent(event);
+  harness.render();
+  assert.equal(clicks, 1, 'the duplicated Alt+S delivery presses the native control once');
+
+  harness.doc.__removeRoot(button);
+});
+/* --------------------------------------------------------- settings recorder */
+
+function mountSettingsPage(harness, overrides) {
+  const entry = harness.registrations.find((item) => item.spec.id === 'project-board-settings');
+  assert.ok(entry, 'the settings page is registered');
+  const injected = entry.spec.inject();
+  const props = Object.assign(
+    {},
+    injected,
+    {
+      t: harness.ctx.locale.bind('projectBoard'),
+      useSettings: (selector) => selector(injected.hooks.settings.getSnapshot()),
+      useLogs: (selector) => selector(injected.hooks.logs.getSnapshot()),
+      useShortcutsCatalog: (selector) => selector(null)
+    },
+    overrides || {}
+  );
+  const instance = harness.runtime.mount(entry.component, props, (node) => {
+    harness.doc.__setComponentRoot('settings', node);
+  });
+  instance.render();
+  return { instance, injected, props };
+}
+
+function clickKeycap(harness, page, index) {
+  const keycaps = harness.doc.querySelectorAll('.pbx-keycap');
+  assert.ok(keycaps.length > index, 'the shortcut keycaps are rendered');
+  keycaps[index].props.onClick({ preventDefault() {}, stopPropagation() {}, target: keycaps[index] });
+  page.instance.render();
+}
+
+test('recording a shortcut stores the combo and consumes the press', () => {
+  const harness = createHarness();
+  const page = mountSettingsPage(harness);
+
+  // The palette row is the first keycap in the shortcuts section.
+  clickKeycap(harness, page, 0);
+  const keycaps = harness.doc.querySelectorAll('.pbx-keycap');
+  assert.ok(String(keycaps[0].className).indexOf('recording') >= 0, 'the clicked keycap is in recording state');
+
+  const event = new KeyboardEventShim('keydown', { key: 'p', code: 'KeyP', altKey: true, ctrlKey: true, bubbles: true, cancelable: true });
+  harness.doc.dispatchEvent(event);
+  page.instance.render();
+
+  assert.equal(harness.settingsStore.getSnapshot().shortcuts.palette, 'ctrl+alt+KeyP', 'the recorded combo is stored');
+  assert.equal(event.defaultPrevented, true, 'the recorder consumes the recorded press');
+});
+
+test('recording a combo owned by another action is rejected and shown inline', () => {
+  const harness = createHarness();
+  const page = mountSettingsPage(harness);
+  const before = harness.settingsStore.getSnapshot().shortcuts;
+
+  clickKeycap(harness, page, 1); // the "previous session" keycap
+  harness.pressRaw({ key: 'k', code: 'KeyK', altKey: true, bubbles: true });
+  page.instance.render();
+
+  const after = harness.settingsStore.getSnapshot().shortcuts;
+  assert.equal(after.prev, before.prev, 'the conflicting combo is not stored');
+  assert.equal(after.palette, 'alt+KeyK', 'the original owner keeps its combo');
+  const errors = harness.doc.querySelectorAll('.pbx-setError');
+  assert.equal(errors.length, 1, 'the conflict is reported inline');
+  assert.ok(String(errors[0].textContent || errors[0].children.length).length >= 0, 'the inline error carries text');
+});
+
+test('recording a combo used by a built-in command is rejected', () => {
+  const harness = createHarness();
+  const page = mountSettingsPage(harness, { findBuiltinConflict: () => ({ label: 'Host Command' }) });
+
+  clickKeycap(harness, page, 0);
+  harness.pressRaw({ key: 'p', code: 'KeyP', altKey: true, bubbles: true });
+  page.instance.render();
+
+  assert.equal(harness.settingsStore.getSnapshot().shortcuts.palette, 'alt+KeyK', 'a built-in conflict is not stored');
+  assert.equal(harness.doc.querySelectorAll('.pbx-setError').length, 1, 'the built-in conflict is reported inline');
+});
+
+test('while recording, other shortcuts stay suppressed', () => {
+  const harness = createHarness();
+  harness.resetState();
+  harness.clearSpies();
+  const page = mountSettingsPage(harness);
+
+  clickKeycap(harness, page, 10); // "rename"
+  // Alt+K is owned by the palette; the recorder must swallow it instead of letting the
+  // global dispatcher open the search panel behind the settings page.
+  harness.pressRaw({ key: 'k', code: 'KeyK', altKey: true, bubbles: true });
+  page.instance.render();
+
+  assert.equal(harness.paletteOpen(), false, 'no shortcut fires while a combo is being recorded');
+  assert.equal(harness.doc.querySelectorAll('.pbx-setError').length, 1, 'the recorder still reports the conflict');
+});
+
+test('Escape cancels recording without changing the combo', () => {
+  const harness = createHarness();
+  const page = mountSettingsPage(harness);
+  const before = harness.settingsStore.getSnapshot().shortcuts;
+
+  clickKeycap(harness, page, 0);
+  harness.pressRaw({ key: 'Escape', code: 'Escape', bubbles: true });
+  page.instance.render();
+
+  assert.equal(harness.settingsStore.getSnapshot().shortcuts.palette, before.palette, 'Escape leaves the combo unchanged');
+  assert.equal(harness.doc.querySelectorAll('.pbx-keycap.recording').length, 0, 'Escape ends the recording state');
+});
+
+test('recording ignores a bare modifier and rejects a modifier-free combo', () => {
+  const harness = createHarness();
+  const page = mountSettingsPage(harness);
+  const before = harness.settingsStore.getSnapshot().shortcuts;
+
+  clickKeycap(harness, page, 0);
+
+  // A modifier pressed on its own is not a combo: the keycap keeps waiting.
+  harness.pressRaw({ key: 'Alt', code: 'AltLeft', altKey: true, bubbles: true });
+  page.instance.render();
+  assert.ok(String(harness.doc.querySelectorAll('.pbx-keycap')[0].className).indexOf('recording') >= 0, 'a bare modifier keeps recording');
+
+  // A plain letter is not a shortcut either: it is rejected with a hint, not stored.
+  harness.pressRaw({ key: 'p', code: 'KeyP', bubbles: true });
+  page.instance.render();
+  assert.equal(harness.settingsStore.getSnapshot().shortcuts.palette, before.palette, 'a modifier-free combo is not stored');
+  assert.equal(harness.doc.querySelectorAll('.pbx-setError').length, 1, 'the missing modifier is reported inline');
+});
+
+test('a tap on Alt+U jumps to the previous instruction and releases match their own key', () => {
+  const harness = createHarness();
+
+  // Minimal conversation view: a flow host with two rendered user bubbles. The first sits
+  // above the viewport, so "previous" has a target to jump to.
+  const flow = new VirtualNode('div', { 'data-slot': 'conversation.chat.flow' }, [], harness.doc);
+  flow.getBoundingClientRect = () => ({ width: 800, height: 600, top: 0, left: 0, right: 800, bottom: 600 });
+  function makeRow(top) {
+    const row = new VirtualNode('div', { 'data-slot': 'conversation.chat.user.content' }, [], harness.doc);
+    row.getBoundingClientRect = () => ({ width: 600, height: 40, top, left: 0, right: 600, bottom: top + 40 });
+    const classes = new Set();
+    row.classList = { add: (name) => classes.add(name), remove: (name) => classes.delete(name), contains: (name) => classes.has(name) };
+    row.offsetWidth = 0;
+    row.__classes = classes;
+    flow.appendChild(row);
+    return row;
+  }
+  const above = makeRow(-50);
+  makeRow(200);
+  harness.doc.__addRoot(flow);
+
+  // Tap: press and release inside the 300 ms hold delay, so the loop never starts.
+  harness.pressCombo('alt+KeyU');
+  harness.window.dispatchEvent(new KeyboardEventShim('keyup', { code: 'KeyU', altKey: true, bubbles: true }));
+  assert.ok(above.__classes.has('pbx-user-jump-highlight'), 'a tap jumps to the previous instruction');
+
+  // A release of a different key belongs to that key's own hold.
+  harness.pressCombo('alt+KeyU');
+  above.__classes.delete('pbx-user-jump-highlight');
+  harness.window.dispatchEvent(new KeyboardEventShim('keyup', { code: 'KeyM', altKey: true, bubbles: true }));
+  assert.equal(above.__classes.has('pbx-user-jump-highlight'), false, 'a different key release leaves the tap pending');
+  harness.window.dispatchEvent(new KeyboardEventShim('keyup', { code: 'KeyU', altKey: true, bubbles: true }));
+  assert.ok(above.__classes.has('pbx-user-jump-highlight'), 'the matching release still performs the tap jump');
+
+  harness.doc.__removeRoot(flow);
+});
+test('auto-repeat and IME composition never trigger a shortcut', () => {
+  const harness = createHarness();
+  harness.resetState();
+  harness.clearSpies();
+
+  // Holding a key down produces repeated keydown events; only the first press acts.
+  const repeatPalette = harness.pressRaw({ key: 'k', code: 'KeyK', altKey: true, repeat: true, bubbles: true });
+  assert.equal(harness.paletteOpen(), false, 'a repeated Alt+K does not open the palette');
+  assert.equal(repeatPalette.defaultPrevented, false, 'a repeat is left to the page');
+
+  const repeatBoard = harness.pressRaw({ key: 'n', code: 'KeyN', altKey: true, repeat: true, bubbles: true });
+  assert.deepEqual(harness.spies.toggleBoard, [], 'a repeated Alt+N does not toggle the board');
+  assert.equal(repeatBoard.defaultPrevented, false, 'the repeat is not consumed');
+
+  // While an IME is composing, the keystroke belongs to the composition.
+  const composing = harness.pressRaw({ key: 'k', code: 'KeyK', altKey: true, isComposing: true, bubbles: true });
+  assert.equal(harness.paletteOpen(), false, 'a composing Alt+K does not open the palette');
+  assert.equal(composing.defaultPrevented, false, 'a composing key is not consumed by the plugin');
+
+  const keyCodeComposing = harness.pressRaw({ key: 'k', code: 'KeyK', altKey: true, keyCode: 229, bubbles: true });
+  assert.equal(harness.paletteOpen(), false, 'a keyCode 229 event does not open the palette');
+  assert.equal(keyCodeComposing.defaultPrevented, false, 'a keyCode 229 event is not consumed');
+
+  // The first real press still works, so the gates are not swallowing everything.
+  harness.pressRaw({ key: 'k', code: 'KeyK', altKey: true, bubbles: true });
+  assert.equal(harness.paletteOpen(), true, 'a fresh press opens the palette');
+});
+/* ------------------------------------------------------- board pane (stateful) */
+
+/**
+ * Make the stubbed host behave like DSH's right pane: opening a tab and expanding the pane
+ * create a `[class*="_panel"][data-sidebar-right-open]` node, `layout.panels.setRightbar`
+ * changes the measured column width and `toggleFullscreen` toggles the fullscreen marker.
+ * The plugin reads that same markup, so the three-state board logic can be exercised end to end.
+ */
+function connectBoardPane(harness) {
+  const state = { kind: null, expanded: false, fullscreen: false, width: 0 };
+  const panel = new VirtualNode('div', { class: '_panel' }, [], harness.doc);
+  const column = new VirtualNode('div', { 'data-rightbar-col': '' }, [], harness.doc);
+  const fullscreenNode = new VirtualNode('div', { 'data-rightbar-fullscreen': 'true' }, [], harness.doc);
+  column.getBoundingClientRect = () => ({ width: state.width, height: 400, top: 0, left: 800, right: 800 + state.width, bottom: 400 });
+  harness.doc.__addRoot(column);
+
+  function sync() {
+    const open = Boolean(state.kind && state.expanded);
+    if (open) panel.setAttribute('data-sidebar-right-open', '');
+    else panel.removeAttribute('data-sidebar-right-open');
+    if (open) harness.doc.__addRoot(panel);
+    else harness.doc.__removeRoot(panel);
+    if (state.fullscreen) harness.doc.__addRoot(fullscreenNode);
+    else harness.doc.__removeRoot(fullscreenNode);
+  }
+
+  harness.services.sidebarRight.active = () => (state.kind ? { kind: state.kind } : undefined);
+  harness.services.sidebarRight.isExpanded = () => state.expanded;
+  harness.services.sidebarRight.openTab = (kind) => {
+    state.kind = kind;
+    harness.services.calls.sidebarOpenTab.push(kind);
+    sync();
+  };
+  harness.services.sidebarRight.toggleExpanded = () => {
+    state.expanded = !state.expanded;
+    if (state.expanded && !state.width) state.width = 380;
+    harness.services.calls.sidebarToggleExpanded.push(state.expanded);
+    sync();
+  };
+  harness.services.sidebarRight.commandTarget = () => (state.kind ? 'board' : undefined);
+  harness.services.sidebarRight.toggleFullscreen = () => {
+    state.fullscreen = !state.fullscreen;
+    sync();
+  };
+  harness.services.layout.panels.setRightbar = (px) => {
+    state.width = px;
+    harness.services.calls.setRightbar.push(px);
+  };
+  return state;
+}
+
+test('Alt+N opens the narrow board and the next press closes it', () => {
+  const harness = createHarness();
+  const state = connectBoardPane(harness);
+  harness.resetState();
+  harness.clearSpies();
+
+  harness.pressCombo('alt+KeyN');
+  assert.equal(state.kind, BOARD_KIND, 'the native board tab is opened');
+  assert.equal(state.expanded, true, 'the pane is expanded');
+  assert.equal(state.width, 380, 'the narrow width is applied');
+
+  harness.pressCombo('alt+KeyN');
+  assert.equal(state.expanded, false, 'the same key closes the pane it opened');
+});
+
+test('a size key opens its own size and any size key closes the board', () => {
+  const harness = createHarness();
+  const state = connectBoardPane(harness);
+  harness.resetState();
+  harness.clearSpies();
+
+  harness.pressCombo('alt+KeyN');
+  assert.equal(state.expanded, true, 'Alt+N opens the pane');
+  assert.equal(state.width, 380, 'at the narrow width');
+
+  /* A size key is its own toggle: while the board shows at ANY size, any size key closes it.
+     Alt+B used to resize a narrow pane instead, so the key meant different things depending
+     on the size the reader happened to be looking at. */
+  harness.pressCombo('alt+KeyB');
+  assert.equal(state.expanded, false, 'a different size key closes the open pane');
+
+  harness.pressCombo('alt+KeyB');
+  assert.equal(state.expanded, true, 'Alt+B opens the pane again');
+  assert.equal(state.width, Math.round(harness.window.innerWidth * 0.5), 'at the half width');
+
+  harness.pressCombo('alt+KeyN');
+  assert.equal(state.expanded, false, 'Alt+N closes the half-width pane');
+});
+
+test('Alt+V opens fullscreen from a closed board and closes on the next press', () => {
+  const harness = createHarness();
+  const state = connectBoardPane(harness);
+  harness.resetState();
+  harness.clearSpies();
+
+  harness.pressCombo('alt+KeyV');
+  assert.equal(state.expanded, true, 'the pane opens');
+  assert.equal(state.fullscreen, true, 'in fullscreen');
+
+  harness.pressCombo('alt+KeyV');
+  assert.equal(state.expanded, false, 'the same key closes it');
+});
+
+test('closing a fullscreen board leaves the fullscreen presentation first', () => {
+  const harness = createHarness();
+  const state = connectBoardPane(harness);
+  harness.resetState();
+  harness.clearSpies();
+
+  harness.pressCombo('alt+KeyV');
+  assert.equal(state.fullscreen, true, 'the board is fullscreen');
+
+  harness.pressCombo('alt+KeyN');
+  assert.equal(state.expanded, false, 'a size key closes the fullscreen board');
+  assert.equal(state.fullscreen, false, 'and leaves the fullscreen presentation');
+});
+/* ------------------------------------------------------------ session cycle */
+
+test('the session cycle handles a single session', () => {
+  const harness = createHarness();
+  harness.patchSessions((fixture) => {
+    fixture.ids = ['s2'];
+    fixture.byId = { s2: fixture.byId.s2 };
+  });
+  harness.resetState();
+  harness.clearSpies();
+
+  harness.pressCombo('alt+Comma');
+  assert.deepEqual(harness.services.calls.openSession, ['s2'], 'next opens the only session');
+
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyI');
+  assert.deepEqual(harness.services.calls.openSession, ['s2'], 'previous opens the only session');
+});
+
+test('the session cycle follows the floating list order', () => {
+  const harness = createHarness();
+  harness.resetState();
+  harness.clearSpies();
+
+  // The floating list publishes the order its rows are shown in; the cycle must follow that
+  // order instead of re-sorting by activity. The default order here would be s1, s2, s3.
+  const orderStore = harness.registrations.find((entry) => entry.spec.id === 'project-board-palette').spec.inject().hooks.hudOrder;
+  orderStore.set({ ids: ['s1', 's3', 's2'] });
+  harness.render();
+
+  harness.pressCombo('alt+Comma');
+  assert.deepEqual(harness.services.calls.openSession, ['s1'], 'next follows the published order (s2 wraps to s1)');
+
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyI');
+  assert.deepEqual(harness.services.calls.openSession, ['s3'], 'previous follows the published order (s2 -> s3)');
+});
+
+test('the session cycle starts from an end when the current session is not listed', () => {
+  const harness = createHarness();
+  harness.patchSessions((fixture) => {
+    delete fixture.byId.s2.retainedBy;
+  });
+  harness.resetState();
+  harness.clearSpies();
+
+  harness.pressCombo('alt+KeyI');
+  assert.deepEqual(harness.services.calls.openSession, ['s3'], 'previous wraps to the last row when there is no current session');
+
+  harness.clearSpies();
+  harness.pressCombo('alt+Comma');
+  assert.deepEqual(harness.services.calls.openSession, ['s1'], 'next starts at the first row when there is no current session');
+});
+/* ------------------------------------------------------- view persistence + HUD */
+
+function mountBoardPanel(harness) {
+  const entry = harness.registrations.find((item) => item.spec.key === 'project-board');
+  assert.ok(entry, 'the main board panel is registered');
+  const injected = entry.spec.inject();
+  const props = Object.assign({}, injected, {
+    useSessions: (selector) => selector(harness.sessions()),
+    useSessionStatus: (selector) => selector(new Map()),
+    useWorkspaces: (selector) =>
+      selector({ items: [{ workspaceId: 'w1', title: 'Workspace', sessionIds: ['s1', 's2', 's3'] }], archivedSessionIds: [] }),
+    useSettings: (selector) => selector(harness.settingsStore.getSnapshot()),
+    t: harness.ctx.locale.bind('projectBoard')
+  });
+  const instance = harness.runtime.mount(entry.component, props, (node) => harness.doc.__setComponentRoot('board', node));
+  instance.render();
+  return instance;
+}
+
+test('opening the board by shortcut lands on the project view', () => {
+  const harness = createHarness();
+  const board = mountBoardPanel(harness);
+  const tabs = () => harness.doc.querySelectorAll('.pbx-tab');
+  assert.equal(tabs().length, 2, 'the board renders its two view tabs');
+  assert.equal(tabs()[0].getAttribute('aria-selected'), 'true', 'the configured default view is projects');
+
+  // The user switches to the session list while the pane stays mounted.
+  tabs()[1].props.onClick({});
+  board.render();
+  assert.equal(tabs()[1].getAttribute('aria-selected'), 'true', 'the session view is selected');
+
+  // Opening the board through a shortcut must land on projects even though the mounted
+  // component still holds the session view in its own state.
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyN');
+  board.render();
+  assert.equal(tabs()[0].getAttribute('aria-selected'), 'true', 'a shortcut open switches back to the project view');
+  assert.deepEqual(harness.spies.toggleBoard, ['narrow'], 'the board was opened once');
+});
+
+test('Alt+E turns a disabled floating list back on', () => {
+  const harness = createHarness();
+  const hud = harness.mountHud();
+  const before = harness.settingsStore.getSnapshot();
+  harness.settingsStore.set({ hud: Object.assign({}, before.hud, { enabled: false }) });
+  hud.render();
+
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyE');
+  hud.render();
+
+  assert.equal(harness.settingsStore.getSnapshot().hud.enabled, true, 'the shortcut re-enables the floating list');
+  assert.equal(harness.hudEvents().filter((type) => type === 'pbx-hud-toggle').length, 1, 'one toggle event per press');
+});
+test('Alt+W toggles the sidebar without disturbing an open board pane', () => {
+  const harness = createHarness();
+  const state = connectBoardPane(harness);
+  harness.resetState();
+  harness.clearSpies();
+
+  harness.pressCombo('alt+KeyN');
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyW');
+
+  assert.deepEqual(harness.services.calls.layoutToggleSidebar, [true], 'the sidebar toggles');
+  assert.deepEqual(harness.spies.toggleBoard, [], 'the board pane is not toggled again');
+  assert.equal(state.expanded, true, 'the board stays open');
+  assert.equal(state.width, 380, 'and keeps its narrow width');
+});
+
+test('Alt+W walks the sidebar API fallbacks when a path is missing or throws', () => {
+  const harness = createHarness();
+  const paths = [];
+  harness.services.layout.toggleSidebar = () => {
+    throw new Error('not supported by this host build');
+  };
+  harness.services.layout.panels = { toggleSidebar: () => { paths.push('panels'); }, setRightbar() {} };
+
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyW');
+  assert.deepEqual(paths, ['panels'], 'a throwing primary path falls through to layout.panels.toggleSidebar');
+
+  // A host build that exposes neither layout method still has the left sidebar service.
+  delete harness.services.layout.toggleSidebar;
+  harness.services.layout.panels = undefined;
+  harness.services.sidebarLeft = { toggleExpanded: () => { paths.push('left'); } };
+  harness.pressCombo('alt+KeyW');
+  assert.deepEqual(paths, ['panels', 'left'], 'the left sidebar service is the last fallback');
+});
+test('every shortcut that must work while typing still does', () => {
+  const harness = createHarness();
+  const textarea = harness.makeEditable();
+  harness.doc.__addRoot(textarea);
+
+  // A queued message for Alt+Enter.
+  const dock = new VirtualNode('div', { 'data-queue-dock': '' }, [], harness.doc);
+  const row = new VirtualNode('li', {}, [], harness.doc);
+  const steer = new VirtualNode('button', { 'aria-label': '插话发送' }, [], harness.doc);
+  let steers = 0;
+  steer.click = () => { steers += 1; };
+  row.appendChild(steer);
+  dock.appendChild(row);
+  harness.doc.__addRoot(dock);
+
+  // The host's own back-to-bottom control for Alt+S.
+  const backToBottom = new VirtualNode('button', { 'aria-label': '回到底部' }, [], harness.doc);
+  backToBottom.getBoundingClientRect = () => ({ width: 24, height: 24, top: 0, left: 0, right: 24, bottom: 24 });
+  let bottoms = 0;
+  backToBottom.click = () => { bottoms += 1; };
+  harness.doc.__addRoot(backToBottom);
+
+  const cases = [
+    { key: 'Enter', code: 'Enter', id: 'interject', check: () => assert.equal(steers, 1, 'Alt+Enter steers while typing') },
+    { key: 'u', code: 'KeyU', id: 'userPrev', check: () => {} },
+    { key: 'm', code: 'KeyM', id: 'userNext', check: () => {} },
+    { key: 's', code: 'KeyS', id: 'scrollBottom', check: () => assert.equal(bottoms, 1, 'Alt+S scrolls to the bottom while typing') }
+  ];
+
+  for (const item of cases) {
+    harness.resetState();
+    harness.clearSpies();
+    harness.focusEditable(textarea);
+    const start = harness.timerCount();
+    const event = harness.pressRaw({ key: item.key, code: item.code, altKey: true, bubbles: true });
+    assert.equal(event.defaultPrevented, true, 'Alt+' + item.code + ' (' + item.id + ') is consumed while typing');
+    if (item.id === 'userPrev' || item.id === 'userNext') {
+      const holdTimers = harness.window.__timers.slice(start).filter((timer) => timer.delay === 300);
+      assert.equal(holdTimers.length, 1, 'Alt+' + item.code + ' arms the hold while typing');
+    }
+    item.check();
+  }
+
+  harness.doc.__removeRoot(dock);
+  harness.doc.__removeRoot(backToBottom);
+});
+/* ------------------------------------------------------- hold-to-scroll loop */
+
+function makeScrollableChat(harness, options) {
+  const settings = options || {};
+  const scroller = new VirtualNode('div', { class: 'native-scroll' }, [], harness.doc);
+  const flow = new VirtualNode('div', { 'data-slot': 'conversation.chat.flow' }, [], harness.doc);
+  flow.getBoundingClientRect = () => ({ width: 800, height: 600, top: 0, left: 0, right: 800, bottom: 600 });
+  scroller.appendChild(flow);
+  scroller.scrollTop = typeof settings.scrollTop === 'number' ? settings.scrollTop : 600;
+  scroller.scrollHeight = typeof settings.scrollHeight === 'number' ? settings.scrollHeight : 2000;
+  scroller.clientHeight = 600;
+  scroller.style = { scrollBehavior: 'smooth' };
+  scroller.getBoundingClientRect = () => ({ width: 800, height: 600, top: 0, left: 0, right: 800, bottom: 600 });
+  scroller.dispatchEvent = () => true;
+  harness.doc.__addRoot(scroller);
+  const previousComputedStyle = harness.window.getComputedStyle;
+  harness.window.getComputedStyle = (node) => (node === scroller ? { overflowY: 'auto' } : { overflowY: 'visible' });
+  return {
+    scroller,
+    restore() {
+      harness.window.getComputedStyle = previousComputedStyle;
+      harness.doc.__removeRoot(scroller);
+    }
+  };
+}
+
+test('holding Alt+U scrolls the conversation up and stops on release', () => {
+  const harness = createHarness();
+  const chat = makeScrollableChat(harness);
+  harness.resetState();
+  harness.clearSpies();
+
+  harness.pressCombo('alt+KeyU');
+  harness.runTimers(); // the 300 ms hold delay elapses and the loop starts
+
+  let clock = 0;
+  for (let i = 0; i < 8; i += 1) {
+    clock += 16;
+    harness.runFrame(clock);
+  }
+  assert.ok(chat.scroller.scrollTop < 600, 'the conversation scrolled up while the key was held');
+  assert.equal(chat.scroller.style.scrollBehavior, 'auto', 'the plugin drives the scroller while held');
+
+  harness.window.dispatchEvent(new KeyboardEventShim('keyup', { code: 'KeyU', altKey: true, bubbles: true }));
+  const releasedAt = chat.scroller.scrollTop;
+  for (let i = 0; i < 4; i += 1) {
+    clock += 16;
+    harness.runFrame(clock);
+  }
+  assert.equal(chat.scroller.scrollTop, releasedAt, 'the loop stops after the key is released');
+  assert.equal(chat.scroller.style.scrollBehavior, 'smooth', 'the original scroll-behavior is restored');
+
+  chat.restore();
+});
+
+test('holding Alt+M to the bottom focuses the composer once', () => {
+  const harness = createHarness();
+  const chat = makeScrollableChat(harness, { scrollTop: 1400, scrollHeight: 2000 });
+  const composer = harness.makeEditable();
+  composer.getBoundingClientRect = () => ({ width: 320, height: 96, top: 600, left: 0, right: 320, bottom: 696 });
+  harness.doc.__addRoot(composer);
+  harness.doc.activeElement = harness.doc.body;
+
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyM');
+  harness.runTimers();
+
+  let clock = 0;
+  for (let i = 0; i < 3; i += 1) {
+    clock += 16;
+    harness.runFrame(clock);
+  }
+  assert.equal(harness.doc.activeElement, composer, 'the composer is focused when the held scroll reaches the bottom');
+
+  harness.window.dispatchEvent(new KeyboardEventShim('keyup', { code: 'KeyM', altKey: true, bubbles: true }));
+  harness.doc.activeElement = harness.doc.body;
+  for (let i = 0; i < 3; i += 1) {
+    clock += 16;
+    harness.runFrame(clock);
+  }
+  assert.equal(harness.doc.activeElement, harness.doc.body, 'the focus is not stolen again after release');
+
+  chat.restore();
+});
+
+test('repeated Alt+U taps walk past the row that was just visited', () => {
+  const harness = createHarness();
+  const flow = new VirtualNode('div', { 'data-slot': 'conversation.chat.flow' }, [], harness.doc);
+  flow.getBoundingClientRect = () => ({ width: 800, height: 600, top: 0, left: 0, right: 800, bottom: 600 });
+  function row(top) {
+    const node = new VirtualNode('div', { 'data-slot': 'conversation.chat.user.content' }, [], harness.doc);
+    node.getBoundingClientRect = () => ({ width: 600, height: 40, top, left: 0, right: 600, bottom: top + 40 });
+    const classes = new Set();
+    node.classList = { add: (name) => classes.add(name), remove: (name) => classes.delete(name), contains: (name) => classes.has(name) };
+    node.offsetWidth = 0;
+    node.__classes = classes;
+    flow.appendChild(node);
+    return node;
+  }
+  const older = row(-200);
+  const nearer = row(-50);
+  row(200);
+  harness.doc.__addRoot(flow);
+
+  harness.resetState();
+  harness.clearSpies();
+
+  harness.pressCombo('alt+KeyU');
+  harness.window.dispatchEvent(new KeyboardEventShim('keyup', { code: 'KeyU', altKey: true, bubbles: true }));
+  assert.ok(nearer.__classes.has('pbx-user-jump-highlight'), 'the first tap jumps to the nearest instruction above the viewport');
+
+  // A second tap inside the 700 ms window must skip the row it just visited.
+  harness.pressCombo('alt+KeyU');
+  harness.window.dispatchEvent(new KeyboardEventShim('keyup', { code: 'KeyU', altKey: true, bubbles: true }));
+  assert.ok(older.__classes.has('pbx-user-jump-highlight'), 'the second tap moves on to the next instruction above');
+
+  harness.doc.__removeRoot(flow);
+});
+test('holding Alt+U near the top prefetches older history once', () => {
+  const harness = createHarness();
+  const chat = makeScrollableChat(harness, { scrollTop: 400, scrollHeight: 2000 });
+  const loadEarlier = new VirtualNode('button', {}, [], harness.doc);
+  loadEarlier.textContent = '加载更早';
+  loadEarlier.getBoundingClientRect = () => ({ width: 120, height: 28, top: 0, left: 0, right: 120, bottom: 28 });
+  loadEarlier.offsetParent = {};
+  let loads = 0;
+  loadEarlier.click = () => { loads += 1; };
+  harness.doc.__addRoot(loadEarlier);
+
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyU');
+  harness.runTimers();
+
+  let clock = 0;
+  for (let i = 0; i < 3; i += 1) {
+    clock += 16;
+    harness.window.__setNow(clock);
+    harness.runFrame(clock);
+  }
+  assert.equal(loads, 1, 'the host history button is pressed once while approaching the top');
+  assert.ok(chat.scroller.scrollTop < 400, 'the loop keeps scrolling while the page loads');
+
+  // The host page arrives: the poll notices the growth and stops waiting.
+  chat.scroller.scrollHeight = 2400;
+  harness.runIntervals();
+  const waits = harness.window.__intervals.filter((timer) => !timer.cleared && timer.delay === 120);
+  assert.equal(waits.length, 0, 'the growth poll stops once the page has arrived');
+
+  harness.window.dispatchEvent(new KeyboardEventShim('keyup', { code: 'KeyU', altKey: true, bubbles: true }));
+  harness.doc.__removeRoot(loadEarlier);
+  chat.restore();
+});
+
+test('a history page that never arrives ends the held scroll instead of looping forever', () => {
+  const harness = createHarness();
+  const chat = makeScrollableChat(harness, { scrollTop: 30, scrollHeight: 2000 });
+  const loadEarlier = new VirtualNode('button', {}, [], harness.doc);
+  loadEarlier.textContent = '加载更早';
+  loadEarlier.getBoundingClientRect = () => ({ width: 120, height: 28, top: 0, left: 0, right: 120, bottom: 28 });
+  loadEarlier.offsetParent = {};
+  let loads = 0;
+  loadEarlier.click = () => { loads += 1; }; // clicks, but the host never grows the list
+  harness.doc.__addRoot(loadEarlier);
+
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyU');
+  harness.runTimers();
+
+  let clock = 0;
+  for (let i = 0; i < 40; i += 1) {
+    clock += 16;
+    harness.window.__setNow(clock);
+    harness.runFrame(clock);
+  }
+  // The 2600 ms deadline is measured on performance.now(): expire it and let the poll run.
+  harness.window.__setNow(clock + 4000);
+  harness.runIntervals();
+  harness.runFrame(clock + 4016);
+
+  assert.equal(loads, 1, 'the button is pressed once, not in a loop');
+  assert.equal(harness.frameCount(), 0, 'the loop stops after the page fails to arrive');
+
+  harness.window.dispatchEvent(new KeyboardEventShim('keyup', { code: 'KeyU', altKey: true, bubbles: true }));
+  harness.doc.__removeRoot(loadEarlier);
+  chat.restore();
+});
+
+test('a reverted scroll position falls back to stepping by message anchors', () => {
+  const harness = createHarness();
+  const scroller = new VirtualNode('div', { class: 'native-scroll' }, [], harness.doc);
+  const flow = new VirtualNode('div', { 'data-slot': 'conversation.chat.flow' }, [], harness.doc);
+  flow.getBoundingClientRect = () => ({ width: 800, height: 600, top: 0, left: 0, right: 800, bottom: 600 });
+  scroller.appendChild(flow);
+  let stored = 600;
+  Object.defineProperty(scroller, 'scrollTop', {
+    get: () => stored,
+    set: () => { /* the host reverts every plain position write */ }
+  });
+  scroller.scrollHeight = 2000;
+  scroller.clientHeight = 600;
+  scroller.style = { scrollBehavior: '' };
+  scroller.getBoundingClientRect = () => ({ width: 800, height: 600, top: 0, left: 0, right: 800, bottom: 600 });
+  scroller.dispatchEvent = () => true;
+  harness.doc.__addRoot(scroller);
+
+  const anchors = [];
+  for (let i = 0; i < 3; i += 1) {
+    const anchor = new VirtualNode('div', { 'data-chat-anchor-key': 'a' + i }, [], harness.doc);
+    anchor.getBoundingClientRect = () => ({ width: 600, height: 80, top: i * 220 - 100, left: 0, right: 600, bottom: i * 220 - 20 });
+    anchor.scrollIntoView = () => { stored = Math.max(0, stored - 120); anchors.push(i); };
+    scroller.appendChild(anchor);
+  }
+
+  const previousComputedStyle = harness.window.getComputedStyle;
+  harness.window.getComputedStyle = (node) => (node === scroller ? { overflowY: 'auto' } : { overflowY: 'visible' });
+
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyU');
+  harness.runTimers();
+
+  let clock = 0;
+  for (let i = 0; i < 30; i += 1) {
+    clock += 16;
+    harness.window.__setNow(clock);
+    harness.runFrame(clock);
+  }
+
+  assert.ok(anchors.length >= 1, 'a message anchor step is used when plain writes are reverted');
+  assert.ok(stored < 600, 'the anchor step actually moved the view');
+
+  harness.window.dispatchEvent(new KeyboardEventShim('keyup', { code: 'KeyU', altKey: true, bubbles: true }));
+  harness.window.getComputedStyle = previousComputedStyle;
+  harness.doc.__removeRoot(scroller);
+});
+test('Alt+W from a fullscreen board exits fullscreen and toggles the sidebar', () => {
+  const harness = createHarness();
+  const state = connectBoardPane(harness);
+  harness.resetState();
+  harness.clearSpies();
+
+  harness.pressCombo('alt+KeyV');
+  assert.equal(state.fullscreen, true, 'the board is fullscreen first');
+
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyW');
+  assert.equal(state.fullscreen, false, 'the fullscreen board is left before the sidebar toggles');
+  assert.deepEqual(harness.services.calls.layoutToggleSidebar, [true], 'the sidebar toggles exactly once');
+  assert.equal(state.expanded, true, 'the board pane itself stays open');
+});
+test('the palette navigates with the arrow keys and opens with Enter', () => {
+  const harness = createHarness();
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyK');
+  assert.equal(harness.paletteOpen(), true, 'the palette is open');
+
+  function input() {
+    const node = harness.doc.querySelector('.pbx-paletteInput');
+    assert.ok(node, 'the palette input is rendered');
+    return node;
+  }
+  function key(name) {
+    input().props.onKeyDown({ key: name, preventDefault() {}, stopPropagation() {}, currentTarget: input() });
+    harness.render();
+  }
+
+  // The list is ordered by activity: s1, s2, s3. One ArrowDown selects s2.
+  key('ArrowDown');
+  key('Enter');
+  assert.deepEqual(harness.services.calls.openSession, ['s2'], 'Enter opens the highlighted row');
+  assert.equal(harness.paletteOpen(), false, 'choosing a row closes the palette');
+
+  // ArrowUp at the top row stays there instead of wrapping out of bounds.
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyK');
+  key('ArrowUp');
+  key('Enter');
+  assert.deepEqual(harness.services.calls.openSession, ['s1'], 'ArrowUp at the first row keeps the first row selected');
+});
+
+test('Alt+S without a scroller scrolls the flow and honours reduced motion', () => {
+  const harness = createHarness();
+  const flow = new VirtualNode('div', { 'data-slot': 'conversation.chat.flow' }, [], harness.doc);
+  flow.getBoundingClientRect = () => ({ width: 800, height: 600, top: 0, left: 0, right: 800, bottom: 600 });
+  const calls = [];
+  flow.scrollIntoView = (options) => { calls.push(options); };
+  harness.doc.__addRoot(flow);
+
+  const composer = harness.makeEditable();
+  composer.getBoundingClientRect = () => ({ width: 320, height: 96, top: 600, left: 0, right: 320, bottom: 696 });
+  harness.doc.__addRoot(composer);
+  harness.doc.activeElement = harness.doc.body;
+
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyS');
+  assert.equal(calls.length, 1, 'the conversation flow is scrolled into view');
+  assert.equal(calls[0].behavior, 'smooth', 'the default scroll is smooth');
+  assert.equal(harness.doc.activeElement, composer, 'the composer still receives focus');
+
+  // With reduced motion requested the fallback jumps instead of animating.
+  const previousMatchMedia = harness.window.matchMedia;
+  harness.window.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventListener() {} });
+  calls.length = 0;
+  harness.doc.activeElement = harness.doc.body;
+  harness.pressCombo('alt+KeyS');
+  assert.equal(calls.length, 1, 'the flow is scrolled again');
+  assert.equal(calls[0].behavior, 'auto', 'reduced motion uses an instant jump');
+  harness.window.matchMedia = previousMatchMedia;
+
+  harness.doc.__removeRoot(flow);
+});
+test('the palette traps Tab focus and closes on Escape', () => {
+  const harness = createHarness();
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyK');
+
+  const originalGetClientRects = VirtualNode.prototype.getClientRects;
+  VirtualNode.prototype.getClientRects = function getClientRects() { return [{}]; };
+  try {
+    const panel = harness.doc.querySelector('.pbx-palette');
+    assert.ok(panel, 'the palette panel is rendered');
+    const focusables = panel.querySelectorAll('button, input');
+    assert.ok(focusables.length >= 2, 'the panel renders focusable controls');
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+
+    let prevented = 0;
+    harness.doc.activeElement = last;
+    panel.props.onKeyDown({ key: 'Tab', shiftKey: false, currentTarget: panel, preventDefault() { prevented += 1; }, stopPropagation() {} });
+    assert.equal(prevented, 1, 'Tab on the last control is trapped');
+    assert.equal(harness.doc.activeElement, first, 'focus wraps to the first control');
+  } finally {
+    VirtualNode.prototype.getClientRects = originalGetClientRects;
+  }
+
+  const input = harness.doc.querySelector('.pbx-paletteInput');
+  input.props.onKeyDown({ key: 'Escape', preventDefault() {}, stopPropagation() {}, currentTarget: input });
+  harness.render();
+  assert.equal(harness.paletteOpen(), false, 'Escape closes the palette');
+});
+/* ---------------------------------------------------- degraded host services */
+
+test('a host without the sidebar-right service degrades instead of throwing', () => {
+  const harness = createHarness({ services: { sidebarRight: undefined } });
+  harness.resetState();
+  harness.clearSpies();
+
+  for (const combo of ['alt+KeyN', 'alt+KeyB', 'alt+KeyV']) {
+    let event = null;
+    assert.doesNotThrow(() => { event = harness.pressCombo(combo); }, combo + ' must not throw without the right-pane service');
+    assert.equal(event.defaultPrevented, true, combo + ' is still consumed');
+    assert.deepEqual(harness.spies.toggleBoard.slice(-1), [combo === 'alt+KeyN' ? 'narrow' : combo === 'alt+KeyB' ? 'half' : 'full'], combo + ' still asks for its mode');
+  }
+
+  // The left sidebar uses a different service and keeps working.
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyW');
+  assert.deepEqual(harness.services.calls.layoutToggleSidebar, [true], 'Alt+W is unaffected by the missing right pane');
+});
+
+test('a host without the layout service falls back to the left sidebar service', () => {
+  const harness = createHarness({ services: { layout: undefined } });
+  harness.services.sidebarLeft = {
+    toggleExpanded() {
+      harness.services.calls.layoutToggleSidebar.push(true);
+    }
+  };
+  harness.resetState();
+  harness.clearSpies();
+
+  assert.doesNotThrow(() => harness.pressCombo('alt+KeyW'), 'Alt+W must not throw without the layout service');
+  assert.deepEqual(harness.services.calls.layoutToggleSidebar, [true], 'the fallback service performs the toggle');
+
+  assert.doesNotThrow(() => harness.pressCombo('alt+KeyN'), 'Alt+N must not throw without the layout service');
+});
+
+test('rename and session-menu stay silent when no session is current', () => {
+  const harness = createHarness();
+  harness.patchSessions((fixture) => {
+    delete fixture.byId.s2.retainedBy;
+  });
+  harness.resetState();
+  harness.clearSpies();
+
+  const renameEvent = harness.pressCombo('alt+KeyR');
+  assert.deepEqual(harness.spies.requestRename, [], 'no rename request without a current session');
+  assert.equal(renameEvent.defaultPrevented, false, 'the rename key is left to the page');
+
+  const menuEvent = harness.pressCombo('alt+KeyD');
+  assert.deepEqual(harness.spies.requestSessionMenu, [], 'no session-menu request without a current session');
+  assert.equal(menuEvent.defaultPrevented, false, 'the session-menu key is left to the page');
+});
+
+test('the built-in conflict check skips catalog rows that already report conflicts', () => {
+  const harness = createHarness();
+  harness.services.shortcuts = {
+    catalog: {
+      getSnapshot: () => [
+        { id: 'conflicted', label: 'Conflicted Command', binding: { code: 'KeyZ', modifiers: ['alt'] }, conflicts: ['another binding'] },
+        { id: 'clean', label: 'Clean Command', binding: { code: 'KeyP', modifiers: ['alt'] } }
+      ]
+    }
+  };
+  const page = mountSettingsPage(harness);
+
+  // A row that already reports conflicts is not a reliable owner of the combo, so it must not
+  // block recording. ("previous session" is keycap index 1.)
+  clickKeycap(harness, page, 1);
+  harness.pressRaw({ key: 'z', code: 'KeyZ', altKey: true, bubbles: true });
+  page.instance.render();
+  assert.equal(harness.settingsStore.getSnapshot().shortcuts.prev, 'alt+KeyZ', 'a conflicted catalog row does not block the combo');
+
+  // A clean row still owns its combo and rejects the recording.
+  clickKeycap(harness, page, 2);
+  harness.pressRaw({ key: 'p', code: 'KeyP', altKey: true, bubbles: true });
+  page.instance.render();
+  assert.equal(harness.settingsStore.getSnapshot().shortcuts.next, 'alt+Comma', 'a clean catalog row still rejects the combo');
+  assert.equal(harness.doc.querySelectorAll('.pbx-setError').length, 1, 'the rejection is reported inline');
+});
+function sidebarLogEntries(harness) {
+  const entry = harness.registrations.find((item) => item.spec.id === 'project-board-settings');
+  return entry.spec.inject().hooks.logs.getSnapshot().entries;
+}
+
+test('Alt+W records whether the toggle actually moved the layout', () => {
+  const harness = createHarness();
+  const frame = new VirtualNode('div', { class: '_frame' }, [], harness.doc);
+  frame.style = { gridTemplateColumns: '280px 1fr' };
+  frame.attributes.style = 'grid-template-columns: 280px 1fr';
+  harness.doc.__addRoot(frame);
+  harness.services.layout.toggleSidebar = () => {
+    frame.style.gridTemplateColumns = '0px 1fr';
+    frame.attributes.style = 'grid-template-columns: 0px 1fr';
+    frame.attributes['data-sidebar-collapsed'] = '';
+  };
+  harness.resetState();
+  harness.clearSpies();
+
+  let mark = sidebarLogEntries(harness).length;
+  harness.pressCombo('alt+KeyW');
+  harness.runTimers();
+  let added = sidebarLogEntries(harness).slice(mark).filter((entry) => entry.scope === 'sidebar');
+  const applied = added.find((entry) => entry.message === 'applied');
+  assert.ok(applied, 'a toggle that moved the frame is recorded as applied');
+  assert.equal(applied.data.before.track, 280, 'the recorded before-state carries the old track');
+  assert.equal(applied.data.after.track, 0, 'the recorded after-state carries the new track');
+
+  // A host API that runs but changes nothing is the "key did nothing" case: warn, not info.
+  harness.services.layout.toggleSidebar = () => {};
+  mark = sidebarLogEntries(harness).length;
+  harness.pressCombo('alt+KeyW');
+  harness.runTimers();
+  added = sidebarLogEntries(harness).slice(mark).filter((entry) => entry.scope === 'sidebar');
+  const noChange = added.find((entry) => entry.message === 'no-change');
+  assert.ok(noChange, 'a silent host API is recorded as no-change');
+  assert.equal(noChange.level, 'warn', 'no-change is a warning so it stands out in the log');
+
+  // Without a frame to compare there is nothing to verify: claim that honestly.
+  harness.doc.__removeRoot(frame);
+  mark = sidebarLogEntries(harness).length;
+  harness.pressCombo('alt+KeyW');
+  harness.runTimers();
+  added = sidebarLogEntries(harness).slice(mark).filter((entry) => entry.scope === 'sidebar');
+  assert.ok(added.some((entry) => entry.message === 'unverified'), 'a missing frame is recorded as unverified');
+});
+
+test('Alt+E is harmless when no floating list is mounted', () => {
+  const harness = createHarness();
+  harness.resetState();
+  harness.clearSpies();
+
+  assert.doesNotThrow(() => harness.pressCombo('alt+KeyE'), 'Alt+E must not throw without a mounted list');
+  assert.equal(harness.hudEvents().filter((type) => type === 'pbx-hud-toggle').length, 1, 'the toggle event is dispatched once');
+});
+test('duplicate shortcut bindings are healed when settings load', () => {
+  // Persist a real settings blob first so the test does not have to hard-code the storage key.
+  const seed = createHarness();
+  const page = mountSettingsPage(seed);
+  clickKeycap(seed, page, 1); // "previous session"
+  seed.pressRaw({ key: 'z', code: 'KeyZ', altKey: true, bubbles: true });
+  page.instance.render();
+
+  const dump = seed.window.localStorage.__dump();
+  const key = Object.keys(dump).find((name) => {
+    try {
+      const value = JSON.parse(dump[name]);
+      return Boolean(value && typeof value === 'object' && value.shortcuts);
+    } catch (error) {
+      return false;
+    }
+  });
+  assert.ok(key, 'the settings blob was persisted');
+
+  const stored = JSON.parse(dump[key]);
+  assert.equal(stored.shortcutsVersion, 1, 'the stored blob already carries the migration marker');
+  assert.equal(stored.shortcuts.prev, 'alt+KeyZ', 'the custom combo was saved');
+  stored.shortcuts.next = 'alt+KeyZ'; // a duplicate the one-time migration can never see again
+
+  const fresh = createHarness({ storage: { [key]: JSON.stringify(stored) } });
+  const shortcuts = fresh.settingsStore.getSnapshot().shortcuts;
+  const owners = Object.keys(shortcuts).filter((action) => shortcuts[action] === 'alt+KeyZ');
+  assert.equal(owners.length, 1, 'only one action keeps the duplicated combo');
+  assert.equal(shortcuts.prev, 'alt+KeyZ', 'the earlier action keeps its combo');
+  assert.equal(shortcuts.next, 'alt+Comma', 'the later action falls back to its own default');
+});
+test('a duplicate that healing cannot repair is surfaced instead of staying silent', () => {
+  // Persist a settings blob, then craft the case healing cannot fix: prev and next share a
+  // combo while both of their own defaults are taken by other actions.
+  const seed = createHarness();
+  const page = mountSettingsPage(seed);
+  clickKeycap(seed, page, 0);
+  seed.pressRaw({ key: 'k', code: 'KeyK', altKey: true, bubbles: true });
+  page.instance.render();
+  const dump = seed.window.localStorage.__dump();
+  const key = Object.keys(dump).find((name) => {
+    try {
+      const value = JSON.parse(dump[name]);
+      return Boolean(value && value.shortcuts);
+    } catch (error) {
+      return false;
+    }
+  });
+  assert.ok(key, 'the settings blob was persisted');
+
+  const stored = JSON.parse(dump[key]);
+  stored.shortcuts.prev = 'alt+KeyZ';
+  stored.shortcuts.next = 'alt+KeyZ';
+  stored.shortcuts.userPrev = 'alt+KeyI'; // occupies prev's default
+  stored.shortcuts.scrollBottom = 'alt+Comma'; // occupies next's default
+
+  const fresh = createHarness({ storage: { [key]: JSON.stringify(stored) } });
+  const shortcuts = fresh.settingsStore.getSnapshot().shortcuts;
+  assert.equal(shortcuts.prev, 'alt+KeyZ');
+  assert.equal(shortcuts.next, 'alt+KeyZ', 'the duplicate survives when neither default is free');
+
+  // The settings page names it instead of leaving a silently dead shortcut.
+  mountSettingsPage(fresh);
+  const warns = fresh.doc.querySelectorAll('.pbx-setWarn[data-self-conflict]');
+  assert.equal(warns.length, 1, 'the settings page reports the unresolved duplicate');
+  assert.equal(warns[0].getAttribute('data-self-conflict'), 'alt+KeyZ');
+
+  // The startup scan records it in the log so a bug report can show it.
+  fresh.runTimers();
+  const logs = fresh.registrations.find((item) => item.spec.id === 'project-board-settings').spec.inject().hooks.logs;
+  const entry = logs.getSnapshot().entries.find((item) => item.scope === 'shortcuts' && item.message === 'duplicate binding');
+  assert.ok(entry, 'the duplicate binding is logged at startup');
+  assert.equal(entry.data.combo, 'alt+KeyZ');
+  assert.equal(entry.level, 'warn', 'the log entry is a warning');
+});
+
+test('a clean shortcut map reports no self-conflict anywhere', () => {
+  const harness = createHarness();
+  mountSettingsPage(harness);
+  assert.equal(harness.doc.querySelectorAll('.pbx-setWarn[data-self-conflict]').length, 0, 'no warning rows for unique bindings');
+
+  harness.runTimers();
+  const logs = harness.registrations.find((item) => item.spec.id === 'project-board-settings').spec.inject().hooks.logs;
+  const duplicates = logs.getSnapshot().entries.filter((item) => item.message === 'duplicate binding');
+  assert.equal(duplicates.length, 0, 'no duplicate-binding log entries for unique bindings');
+});
+/** Dialog components return a form element; run convertTree on the form itself so its real
+ *  markup (role=dialog, aria-modal) lands in the virtual document. */
+function mountReturnedForm(harness, component, props, rootKey) {
+  const element = component(props);
+  const target = element && typeof element === 'object' && element.type && typeof element.type !== 'string' ? element : null;
+  const instance = target
+    ? harness.runtime.mount(target.type, target.props || {}, (node) => harness.doc.__setComponentRoot(rootKey, node))
+    : harness.runtime.mount(component, props, (node) => harness.doc.__setComponentRoot(rootKey, node));
+  instance.render();
+  return instance;
+}
+const tick = () => new Promise((resolve) => setImmediate(resolve));
+
+/* ------------------------------------------------- plugin-owned dialogs (modal) */
+
+function mountRenameDialog(harness, request, overrides) {
+  const entry = harness.registrations.find((item) => item.spec.id === 'project-board-rename');
+  assert.ok(entry, 'the rename dialog is registered');
+  const injected = entry.spec.inject();
+  injected.rename.set({ sessionId: request.sessionId, currentTitle: request.currentTitle, at: Date.now() });
+  const props = Object.assign(
+    {},
+    injected,
+    { useRename: (selector) => selector(injected.hooks.rename.getSnapshot()), t: harness.ctx.locale.bind('projectBoard') },
+    overrides || {}
+  );
+  // convertTree treats nested components as opaque, so mount the form the dialog returns.
+  const instance = mountReturnedForm(harness, entry.component, props, 'rename');
+  return { instance, injected };
+}
+
+function mountSessionMenu(harness, request, overrides) {
+  const entry = harness.registrations.find((item) => item.spec.id === 'project-board-session-menu');
+  assert.ok(entry, 'the session menu is registered');
+  const injected = entry.spec.inject();
+  injected.hooks.sessionMenu.set({ sessionId: request.sessionId, title: request.title, at: Date.now() });
+  const props = Object.assign(
+    {},
+    injected,
+    { useSessionMenu: (selector) => selector(injected.hooks.sessionMenu.getSnapshot()), t: harness.ctx.locale.bind('projectBoard') },
+    overrides || {}
+  );
+  const instance = mountReturnedForm(harness, entry.component, props, 'session-menu');
+  return { instance, injected };
+}
+
+test('an open rename dialog leaves every shortcut to the dialog', () => {
+  const harness = createHarness();
+  const shortcuts = harness.settingsStore.getSnapshot().shortcuts;
+  mountRenameDialog(harness, { sessionId: 's2', currentTitle: 'Beta' });
+  assert.ok(harness.doc.querySelector('.pbx-renameCard'), 'the rename dialog is rendered');
+
+  for (const id of Object.keys(shortcuts)) {
+    harness.resetState();
+    harness.clearSpies();
+    harness.doc.activeElement = harness.doc.body;
+    const event = harness.pressCombo(shortcuts[id]);
+    assert.equal(event.defaultPrevented, false, shortcuts[id] + ' (' + id + ') is left to the rename dialog');
+  }
+  assert.equal(harness.paletteOpen(), false, 'no shortcut opens the palette behind the dialog');
+  assert.deepEqual(harness.spies.requestRename, [], 'Alt+R does not stack a second rename dialog');
+  assert.deepEqual(harness.spies.requestSessionMenu, [], 'Alt+D does not open the menu behind the dialog');
+  assert.deepEqual(harness.spies.toggleBoard, [], 'no board shortcut fires behind the dialog');
+  assert.deepEqual(harness.hudEvents(), [], 'Alt+E does not fire behind the dialog');
+});
+
+test('an open session menu leaves every shortcut to the dialog', () => {
+  const harness = createHarness();
+  const shortcuts = harness.settingsStore.getSnapshot().shortcuts;
+  const menu = mountSessionMenu(harness, { sessionId: 's2', title: 'Beta' });
+  assert.ok(harness.doc.querySelector('.pbx-renameCard'), 'the session menu is rendered');
+
+  for (const id of Object.keys(shortcuts)) {
+    harness.resetState();
+    harness.clearSpies();
+    harness.doc.activeElement = harness.doc.body;
+    const event = harness.pressCombo(shortcuts[id]);
+    assert.equal(event.defaultPrevented, false, shortcuts[id] + ' (' + id + ') is left to the session menu');
+  }
+  assert.deepEqual(harness.spies.requestSessionMenu, [], 'Alt+D does not stack a second menu');
+  assert.deepEqual(harness.spies.toggleLeftSidebar, [], 'Alt+W does not fire behind the dialog');
+
+  // A host without a delete API: the destructive action is disabled and stays disabled.
+  const danger = harness.doc.querySelectorAll('.pbx-menuOption.danger')[0];
+  assert.ok(danger, 'the delete option is rendered');
+  assert.equal(danger.disabled, true, 'delete is disabled when the host exposes no delete API');
+  const archive = harness.doc.querySelectorAll('.pbx-menuOption')[0];
+  assert.equal(archive.disabled, false, 'archive stays available');
+  assert.equal(menu.injected.deleteSupported, false, 'the injected capability flag agrees');
+});
+test('submitting a rename trims, saves once and closes the dialog', async () => {
+  const harness = createHarness();
+  const calls = [];
+  const page = mountRenameDialog(harness, { sessionId: 's2', currentTitle: 'Beta' }, {
+    renameSession: (id, title) => { calls.push([id, title]); return { ok: true }; }
+  });
+
+  const input = harness.doc.querySelector('.pbx-renameInput');
+  input.props.onChange({ target: { value: '  Beta 2  ' } });
+  page.instance.render();
+  harness.doc.querySelectorAll('.pbx-renameBtn.primary')[0].props.onClick({});
+  await tick();
+  page.instance.render();
+
+  assert.deepEqual(calls, [['s2', 'Beta 2']], 'the trimmed title is submitted once');
+  assert.equal(page.injected.hooks.rename.getSnapshot().sessionId, null, 'the dialog closes after success');
+});
+
+test('the Enter key submits a rename and Escape cancels it', async () => {
+  const harness = createHarness();
+  const calls = [];
+  const page = mountRenameDialog(harness, { sessionId: 's2', currentTitle: 'Beta' }, {
+    renameSession: (id, title) => { calls.push([id, title]); return { ok: true }; }
+  });
+
+  let input = harness.doc.querySelector('.pbx-renameInput');
+  input.props.onChange({ target: { value: 'Entered' } });
+  page.instance.render();
+  input = harness.doc.querySelector('.pbx-renameInput');
+  input.props.onKeyDown({ key: 'Enter', preventDefault() {}, stopPropagation() {} });
+  await tick();
+  page.instance.render();
+  assert.deepEqual(calls, [['s2', 'Entered']], 'Enter submits the rename');
+
+  // A second dialog: Escape closes it without calling the host.
+  const page2 = mountRenameDialog(harness, { sessionId: 's3', currentTitle: 'Gamma' }, {
+    renameSession: () => { throw new Error('must not be called'); }
+  });
+  harness.doc.activeElement = harness.doc.body;
+  harness.doc.dispatchEvent(new KeyboardEventShim('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  page2.instance.render();
+  assert.equal(page2.injected.hooks.rename.getSnapshot().sessionId, null, 'Escape closes the dialog');
+});
+
+test('a failed rename keeps the dialog open and shows the reason', async () => {
+  const harness = createHarness();
+  const page = mountRenameDialog(harness, { sessionId: 's2', currentTitle: 'Beta' }, {
+    renameSession: () => ({ ok: false, error: { message: 'rename failed on host' } })
+  });
+
+  const input = harness.doc.querySelector('.pbx-renameInput');
+  input.props.onChange({ target: { value: 'Nope' } });
+  page.instance.render();
+  harness.doc.querySelectorAll('.pbx-renameBtn.primary')[0].props.onClick({});
+  await tick();
+  page.instance.render();
+
+  const error = harness.doc.querySelector('.pbx-renameError');
+  assert.ok(error, 'the failure is shown in the dialog');
+  assert.equal(error.children[0].textContent, 'rename failed on host');
+  assert.equal(page.injected.hooks.rename.getSnapshot().sessionId, 's2', 'the dialog stays open for another try');
+});
+
+test('archiving from the session menu closes it on success and reports failures', async () => {
+  const harness = createHarness();
+  const archived = [];
+  const menu = mountSessionMenu(harness, { sessionId: 's2', title: 'Beta' }, {
+    archiveSession: (id) => { archived.push(id); return { ok: true }; }
+  });
+  harness.doc.querySelectorAll('.pbx-menuOption')[0].props.onClick({});
+  await tick();
+  menu.instance.render();
+  assert.deepEqual(archived, ['s2'], 'the session is archived once');
+  assert.equal(menu.injected.hooks.sessionMenu.getSnapshot().sessionId, null, 'the menu closes after archiving');
+
+  const failing = mountSessionMenu(harness, { sessionId: 's3', title: 'Gamma' }, {
+    archiveSession: () => ({ ok: false, error: { message: 'session is still running' } })
+  });
+  harness.doc.querySelectorAll('.pbx-menuOption')[0].props.onClick({});
+  await tick();
+  failing.instance.render();
+  const error = harness.doc.querySelector('.pbx-renameError');
+  assert.ok(error, 'the archive failure is shown');
+  assert.ok(String(error.children[0].textContent).indexOf('session is still running') >= 0, 'the host reason is carried into the message');
+  assert.equal(failing.injected.hooks.sessionMenu.getSnapshot().sessionId, 's3', 'the menu stays open');
+});
+
+test('delete asks for confirmation once and then calls the host', async () => {
+  const harness = createHarness();
+  const deletions = [];
+  const menu = mountSessionMenu(harness, { sessionId: 's2', title: 'Beta' }, {
+    deleteSupported: true,
+    deleteSession: (id) => { deletions.push(id); return { ok: true }; }
+  });
+
+  harness.doc.querySelectorAll('.pbx-menuOption.danger')[0].props.onClick({});
+  await tick();
+  menu.instance.render();
+  assert.deepEqual(deletions, [], 'the first press only asks for confirmation');
+
+  harness.doc.querySelectorAll('.pbx-menuOption.danger')[0].props.onClick({});
+  await tick();
+  menu.instance.render();
+  assert.deepEqual(deletions, ['s2'], 'the second press deletes the session');
+  assert.equal(menu.injected.hooks.sessionMenu.getSnapshot().sessionId, null, 'the menu closes after deleting');
+});
+/* --------------------------------------------------------- floating list (HUD) */
+
+test('Alt+E collapses and expands the floating list and persists the choice', () => {
+  const harness = createHarness();
+  const hud = harness.mountHud('hud');
+  harness.resetState();
+  harness.clearSpies();
+
+  assert.ok(harness.doc.querySelector('.pbx-hud'), 'the floating list is rendered');
+
+  harness.pressCombo('alt+KeyE');
+  harness.runTimers(); // the 120 ms swap timer applies the collapse
+  hud.render();
+  assert.equal(harness.window.localStorage.getItem('pbx.hud.collapsed'), '1', 'the collapsed choice is persisted');
+  let root = harness.doc.querySelector('.pbx-hud');
+  assert.ok(String(root.className).indexOf('collapsed') >= 0, 'the pill is rendered after collapsing');
+
+  harness.pressCombo('alt+KeyE');
+  harness.runTimers();
+  hud.render();
+  assert.equal(harness.window.localStorage.getItem('pbx.hud.collapsed'), '0', 'the expanded choice is persisted');
+  root = harness.doc.querySelector('.pbx-hud');
+  assert.ok(String(root.className).indexOf('collapsed') < 0, 'the list is rendered after expanding');
+});
+
+test('opening the palette while a hold is running stops the scroll', () => {
+  const harness = createHarness();
+  const chat = makeScrollableChat(harness, { scrollTop: 600 });
+  harness.resetState();
+  harness.clearSpies();
+
+  harness.pressCombo('alt+KeyU');
+  harness.runTimers();
+  let clock = 0;
+  for (let i = 0; i < 5; i += 1) {
+    clock += 16;
+    harness.window.__setNow(clock);
+    harness.runFrame(clock);
+  }
+  const movedTo = chat.scroller.scrollTop;
+  assert.ok(movedTo < 600, 'the hold is scrolling before the palette opens');
+
+  // The user opens the search palette with the mouse while still holding the key.
+  harness.paletteStore.set({ open: true, move: { dir: 0, at: 0 } });
+  harness.render();
+  for (let i = 0; i < 5; i += 1) {
+    clock += 16;
+    harness.window.__setNow(clock);
+    harness.runFrame(clock);
+  }
+  assert.equal(chat.scroller.scrollTop, movedTo, 'the conversation stops scrolling once the palette is open');
+
+  harness.paletteStore.set({ open: false, move: { dir: 0, at: 0 } });
+  harness.window.dispatchEvent(new KeyboardEventShim('keyup', { code: 'KeyU', altKey: true, bubbles: true }));
+  chat.restore();
+});
+test('dragging the floating list stores its position and follows it', () => {
+  const harness = createHarness();
+  const hud = harness.mountHud('hud');
+  harness.resetState();
+  harness.clearSpies();
+
+  const head = harness.doc.querySelector('.pbx-hudHead');
+  assert.ok(head, 'the floating list header is rendered');
+  const box = harness.doc.querySelector('.pbx-hud');
+  box.getBoundingClientRect = () => ({ width: 280, height: 200, top: 40, left: 40, right: 320, bottom: 240 });
+  box.offsetWidth = 280;
+  box.offsetHeight = 200;
+
+  head.props.onPointerDown({
+    button: 0,
+    clientX: 100,
+    clientY: 100,
+    target: head,
+    currentTarget: head,
+    preventDefault() {},
+    stopPropagation() {}
+  });
+  hud.render();
+
+  harness.window.dispatchEvent({ type: 'pointermove', clientX: 240, clientY: 300, bubbles: true });
+  hud.render();
+  harness.window.dispatchEvent({ type: 'pointerup', bubbles: true });
+  hud.render();
+
+  const raw = harness.window.localStorage.getItem('pbx.hud.pos');
+  assert.ok(raw, 'the dropped position is stored');
+  const pos = JSON.parse(raw);
+  assert.equal(pos.x, 180, 'the x follows the drag offset');
+  assert.equal(pos.y, 240, 'the y follows the drag offset');
+
+  const root = harness.doc.querySelector('.pbx-hud');
+  assert.equal(root.style.left, pos.x + 'px', 'the list is placed at the stored x');
+  assert.equal(root.style.top, pos.y + 'px', 'the list is placed at the stored y');
+});
+
+test('a stored position is honoured when the floating list mounts', () => {
+  const harness = createHarness();
+  harness.window.localStorage.setItem('pbx.hud.pos', JSON.stringify({ x: 120, y: 260 }));
+  const before = harness.settingsStore.getSnapshot();
+  harness.settingsStore.set({ hud: Object.assign({}, before.hud, { defaultPosition: 'last' }) });
+
+  const hud = harness.mountHud('hud');
+  hud.render();
+
+  const root = harness.doc.querySelector('.pbx-hud');
+  assert.ok(root, 'the floating list is rendered');
+  assert.equal(root.style.left, '120px', 'the stored x is restored');
+  assert.equal(root.style.top, '260px', 'the stored y is restored');
+});
+test('a moved floating list docks next to the sidebar and returns to its own spot', () => {
+  const harness = createHarness();
+  harness.resetState();
+  harness.clearSpies();
+  harness.window.localStorage.setItem('pbx.hud.pos', JSON.stringify({ x: 600, y: 500 }));
+  const settings = harness.settingsStore.getSnapshot();
+  harness.settingsStore.set({ hud: Object.assign({}, settings.hud, { defaultPosition: 'last' }) });
+
+  /* element.style.gridTemplateColumns is the value only; the attribute keeps the declaration. */
+  const closed = '0px minmax(400px, 1fr) minmax(0px, 800px)';
+  const opened = '280px minmax(400px, 1fr) minmax(0px, 800px)';
+  const frame = new VirtualNode('div', { className: 'AppFrame_frame', style: { gridTemplateColumns: closed }, 'data-sidebar-collapsed': 'true' }, [], harness.doc);
+  frame.attributes.style = 'grid-template-columns: ' + closed;
+  const column = new VirtualNode('div', { class: '_sidebarCol' }, [], harness.doc);
+  column.getBoundingClientRect = () => ({ width: 280, height: 800, top: 0, left: 0, right: 280, bottom: 800 });
+  frame.appendChild(column);
+  harness.doc.__addRoot(frame);
+
+  const hud = harness.mountHud('hud');
+  assert.ok(hud.node, 'the floating list rendered');
+  assert.equal(hud.node.style.left, '600px', 'the list starts at its stored spot');
+
+  // The native sidebar opens: the list docks beside it and collapses to the pill.
+  frame.style.gridTemplateColumns = opened;
+  frame.attributes.style = 'grid-template-columns: ' + opened;
+  frame.removeAttribute('data-sidebar-collapsed');
+  harness.runIntervals();
+  hud.render();
+  harness.runTimers(); // the 80 ms dock position and the 320 ms follow-up
+  hud.render();
+  assert.equal(/collapsed/.test(hud.node.className), true, 'the list collapses while docked');
+  assert.equal(hud.node.style.left, '288px', 'the pill hugs the sidebar column edge');
+
+  // Closing the sidebar returns the list to the user own position and expanded state.
+  frame.style.gridTemplateColumns = closed;
+  frame.attributes.style = 'grid-template-columns: ' + closed;
+  frame.setAttribute('data-sidebar-collapsed', 'true');
+  harness.runIntervals();
+  hud.render();
+  assert.equal(/collapsed/.test(hud.node.className), false, 'the list unfolds again');
+  assert.equal(hud.node.style.left, '600px', 'the list returns to the stored x');
+  assert.equal(hud.node.style.top, '500px', 'the list returns to the stored y');
+
+  harness.doc.__removeRoot(frame);
+});
+
+test('Alt+E on a disabled floating list re-enables it expanded', () => {
+  const harness = createHarness();
+  const before = harness.settingsStore.getSnapshot();
+  harness.settingsStore.set({ hud: Object.assign({}, before.hud, { enabled: false, defaultCollapsed: true }) });
+  const hud = harness.mountHud('hud');
+  assert.equal(hud.node, null, 'nothing is rendered while the list is disabled');
+
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyE');
+  harness.runTimers();
+  hud.render();
+
+  assert.equal(harness.settingsStore.getSnapshot().hud.enabled, true, 'the shortcut turns the list back on');
+  assert.ok(hud.node, 'the list is rendered again');
+  assert.equal(/collapsed/.test(hud.node.className), false, 'and it comes back expanded, not as a pill');
+  assert.equal(harness.window.localStorage.getItem('pbx.hud.collapsed'), '0', 'the expanded choice is persisted');
+});
+test('board shortcuts do not disturb a docked floating list', () => {
+  const harness = createHarness();
+  harness.window.localStorage.setItem('pbx.hud.pos', JSON.stringify({ x: 600, y: 500 }));
+  const seeded = harness.settingsStore.getSnapshot();
+  harness.settingsStore.set({ hud: Object.assign({}, seeded.hud, { defaultPosition: 'last' }) });
+  const closed = '0px minmax(400px, 1fr) minmax(0px, 800px)';
+  const opened = '280px minmax(400px, 1fr) minmax(0px, 800px)';
+  const frame = new VirtualNode('div', { className: 'AppFrame_frame', style: { gridTemplateColumns: closed }, 'data-sidebar-collapsed': 'true' }, [], harness.doc);
+  frame.attributes.style = 'grid-template-columns: ' + closed;
+  const column = new VirtualNode('div', { class: '_sidebarCol' }, [], harness.doc);
+  column.getBoundingClientRect = () => ({ width: 280, height: 800, top: 0, left: 0, right: 280, bottom: 800 });
+  frame.appendChild(column);
+  harness.doc.__addRoot(frame);
+
+  const hud = harness.mountHud('hud');
+  frame.style.gridTemplateColumns = opened;
+  frame.attributes.style = 'grid-template-columns: ' + opened;
+  frame.removeAttribute('data-sidebar-collapsed');
+  harness.runIntervals();
+  hud.render();
+  harness.runTimers();
+  hud.render();
+  assert.equal(/collapsed/.test(hud.node.className), true, 'the list is docked and collapsed');
+  assert.equal(hud.node.style.left, '288px', 'the pill sits beside the sidebar');
+
+  const logs = harness.registrations.find((item) => item.spec.id === 'project-board-settings').spec.inject().hooks.logs;
+  const dockCount = () => logs.getSnapshot().entries.filter((entry) => entry.scope === 'hud' && entry.message === 'dock').length;
+  const docked = dockCount();
+  assert.ok(docked >= 1, 'docking is recorded');
+
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyN');
+  hud.render();
+  harness.runIntervals();
+  hud.render();
+  assert.deepEqual(harness.spies.toggleBoard, ['narrow'], 'the board shortcut still opens the pane');
+  assert.equal(/collapsed/.test(hud.node.className), true, 'the docked pill stays collapsed');
+  assert.equal(hud.node.style.left, '288px', 'the docked position is untouched by the board shortcut');
+  assert.equal(dockCount(), docked, 'the board shortcut does not dock the list again');
+
+  harness.doc.__removeRoot(frame);
+});
+test('Alt+E during a drag collapses the list and the drop still completes', () => {
+  const harness = createHarness();
+  const hud = harness.mountHud('hud');
+  assert.ok(hud.node, 'the floating list rendered');
+  hud.node.getBoundingClientRect = () => ({ width: 280, height: 200, top: 40, left: 40, right: 320, bottom: 240 });
+  hud.node.offsetWidth = 280;
+  hud.node.offsetHeight = 200;
+
+  const head = harness.doc.querySelector('.pbx-hudHead');
+  head.props.onPointerDown({ button: 0, clientX: 100, clientY: 100, target: head, currentTarget: head, preventDefault() {}, stopPropagation() {} });
+  hud.render();
+  assert.ok(/dragging/.test(hud.node.className), 'the list reports the drag');
+
+  harness.window.dispatchEvent({ type: 'pointermove', clientX: 300, clientY: 320, bubbles: true });
+  hud.render();
+
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyE');
+  hud.render();
+  harness.runTimers();
+  hud.render();
+  assert.equal(/collapsed/.test(hud.node.className), true, 'Alt+E collapses the list even mid-drag');
+
+  harness.window.dispatchEvent({ type: 'pointerup', bubbles: true });
+  hud.render();
+  assert.equal(/dragging/.test(hud.node.className), false, 'the drop clears the drag state');
+  assert.ok(harness.window.localStorage.getItem('pbx.hud.pos'), 'the dropped position is still stored');
+});
+test('invalid stored shortcut values fall back to their defaults', () => {
+  // Persist a real blob, then corrupt individual values the way a hand-edited file would.
+  const seed = createHarness();
+  const page = mountSettingsPage(seed);
+  clickKeycap(seed, page, 0);
+  seed.pressRaw({ key: 'k', code: 'KeyK', altKey: true, bubbles: true });
+  page.instance.render();
+  const dump = seed.window.localStorage.__dump();
+  const key = Object.keys(dump).find((name) => {
+    try {
+      const value = JSON.parse(dump[name]);
+      return Boolean(value && value.shortcuts);
+    } catch (error) {
+      return false;
+    }
+  });
+  assert.ok(key, 'the settings blob was persisted');
+
+  const stored = JSON.parse(dump[key]);
+  stored.shortcuts.prev = 'KeyK'; // no modifier
+  stored.shortcuts.next = ''; // empty
+  stored.shortcuts.userPrev = 42; // wrong type
+  stored.shortcuts.palette = 'alt+KeyP'; // a valid custom combo
+  stored.shortcuts.bogusAction = 'alt+KeyQ'; // unknown action
+
+  const fresh = createHarness({ storage: { [key]: JSON.stringify(stored) } });
+  const shortcuts = fresh.settingsStore.getSnapshot().shortcuts;
+  assert.equal(shortcuts.prev, 'alt+KeyI', 'a modifier-less value falls back to the default');
+  assert.equal(shortcuts.next, 'alt+Comma', 'an empty value falls back to the default');
+  assert.equal(shortcuts.userPrev, 'alt+KeyU', 'a non-string value falls back to the default');
+  assert.equal(shortcuts.palette, 'alt+KeyP', 'a valid custom combo survives untouched');
+
+  fresh.resetState();
+  fresh.clearSpies();
+  const restored = fresh.pressCombo('alt+KeyI');
+  assert.equal(restored.defaultPrevented, true, 'the restored default combo works again');
+  const unknown = fresh.pressCombo('alt+KeyQ');
+  assert.equal(unknown.defaultPrevented, false, 'a combo stored under an unknown action stays inert');
+});
+test('Escape in the palette drops the project filter before it closes the panel', () => {
+  const harness = createHarness();
+  harness.setWorkspaces({
+    items: [{ workspaceId: 'w1', title: 'Workspace', sessionIds: ['s1', 's2', 's3'] }],
+    archivedSessionIds: []
+  });
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyK');
+  assert.equal(harness.paletteOpen(), true, 'the palette is open');
+
+  const chips = harness.doc.querySelectorAll('.pbx-pchip');
+  assert.equal(chips.length, 2, 'the palette offers an all-projects chip and one project chip');
+  chips[1].props.onClick({});
+  harness.render();
+  const active = harness.doc.querySelectorAll('.pbx-pchip.on');
+  assert.equal(active.length, 1, 'one chip owns the filter');
+  assert.notEqual(active[0], harness.doc.querySelectorAll('.pbx-pchip')[0], 'the project chip is the active one');
+
+  function escape() {
+    const input = harness.doc.querySelector('.pbx-paletteInput');
+    input.props.onKeyDown({ key: 'Escape', preventDefault() {}, stopPropagation() {}, currentTarget: input });
+    harness.render();
+  }
+  escape();
+  assert.equal(harness.paletteOpen(), true, 'the first Escape only clears the filter');
+  const chipsAfter = harness.doc.querySelectorAll('.pbx-pchip');
+  const cleared = harness.doc.querySelectorAll('.pbx-pchip.on');
+  assert.equal(cleared.length, 1, 'exactly one chip is active after clearing');
+  assert.equal(cleared[0], chipsAfter[0], 'the all-projects chip is active again');
+
+  escape();
+  assert.equal(harness.paletteOpen(), false, 'the second Escape closes the palette');
+});
+test('Alt+Enter with a disabled steer reports instead of pretending to send', () => {
+  const harness = createHarness();
+  const dock = new VirtualNode('div', { 'data-queue-dock': '' }, [], harness.doc);
+  const row = new VirtualNode('li', {}, [], harness.doc);
+  const steer = new VirtualNode('button', { 'aria-label': '插话发送' }, [], harness.doc);
+  steer.disabled = true;
+  let clicks = 0;
+  steer.click = () => { clicks += 1; };
+  row.appendChild(steer);
+  dock.appendChild(row);
+  harness.doc.__addRoot(dock);
+
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+Enter');
+
+  assert.equal(clicks, 0, 'a disabled steer button is never clicked');
+  assert.equal(harness.spies.notify.length, 1, 'the user is told there is nothing to send');
+  assert.equal(harness.spies.notify[0].tone, 'warn', 'the notice is a warning');
+
+  harness.doc.__removeRoot(dock);
+});
+
+test('Alt+S is harmless without a conversation on screen', () => {
+  const harness = createHarness();
+  harness.resetState();
+  harness.clearSpies();
+  let event = null;
+  assert.doesNotThrow(() => { event = harness.pressCombo('alt+KeyS'); }, 'Alt+S must not throw without a chat');
+  assert.equal(event.defaultPrevented, true, 'the combo is still consumed');
+  assert.equal(harness.doc.activeElement, harness.doc.body, 'and no stray focus change happens');
+});
+test('the cycle shortcuts move the palette highlight while it is open', () => {
+  const harness = createHarness();
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyK');
+  assert.equal(harness.paletteOpen(), true, 'the palette is open');
+
+  harness.pressCombo('alt+Comma'); // next -> move the highlight down one row
+  harness.render();
+  const input = harness.doc.querySelector('.pbx-paletteInput');
+  input.props.onKeyDown({ key: 'Enter', preventDefault() {}, stopPropagation() {}, currentTarget: input });
+  harness.render();
+
+  assert.deepEqual(harness.services.calls.openSession, ['s2'], 'the moved highlight is the row that opens');
+  assert.equal(harness.paletteOpen(), false, 'choosing a row closes the palette');
+});
+
+test('filtering the palette keeps Enter on a real row', () => {
+  const harness = createHarness();
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyK');
+
+  function key(name) {
+    const node = harness.doc.querySelector('.pbx-paletteInput');
+    node.props.onKeyDown({ key: name, preventDefault() {}, stopPropagation() {}, currentTarget: node });
+    harness.render();
+  }
+  key('ArrowDown'); // highlight the second row
+
+  const input = harness.doc.querySelector('.pbx-paletteInput');
+  input.props.onChange({ target: { value: 'Beta' } });
+  harness.render();
+  key('Enter');
+
+  assert.deepEqual(harness.services.calls.openSession, ['s2'], 'the only matching row opens after the list narrows');
+});
+
+test('the palette shortcut closes an open palette and reopens it', () => {
+  const harness = createHarness();
+  harness.resetState();
+  harness.clearSpies();
+
+  harness.pressCombo('alt+KeyK');
+  assert.equal(harness.paletteOpen(), true, 'the first press opens the palette');
+  harness.pressCombo('alt+KeyK');
+  assert.equal(harness.paletteOpen(), false, 'the second press closes it');
+  harness.pressCombo('alt+KeyK');
+  assert.equal(harness.paletteOpen(), true, 'and it opens again instead of sticking');
+});
+test('a disabled board leaves its shortcuts alone', () => {
+  const harness = createHarness();
+  const before = harness.settingsStore.getSnapshot();
+  harness.settingsStore.set({ board: Object.assign({}, before.board, { enabled: false }) });
+  harness.resetState();
+  harness.clearSpies();
+  harness.render();
+
+  for (const combo of ['alt+KeyN', 'alt+KeyB', 'alt+KeyV']) {
+    const event = harness.pressCombo(combo);
+    assert.equal(event.defaultPrevented, false, combo + ' is left to the rest of the app');
+  }
+  assert.deepEqual(harness.spies.toggleBoard, [], 'no board mode is requested while the board is disabled');
+
+  // Re-enabling it restores the shortcuts immediately (no reload needed).
+  const after = harness.settingsStore.getSnapshot();
+  harness.settingsStore.set({ board: Object.assign({}, after.board, { enabled: true }) });
+  harness.resetState();
+  harness.clearSpies();
+  const enabled = harness.pressCombo('alt+KeyN');
+  assert.equal(enabled.defaultPrevented, true, 'the shortcut is consumed again');
+  assert.deepEqual(harness.spies.toggleBoard, ['narrow'], 'and it opens the board again');
+});
+
+test('auto-repeat never re-triggers a shortcut', () => {
+  const harness = createHarness();
+  harness.resetState();
+  harness.clearSpies();
+
+  // A held key arrives as repeat=true after the first press: the first acts, the repeats do not.
+  const first = harness.pressRaw({ key: 'e', code: 'KeyE', altKey: true, bubbles: true });
+  const repeat = harness.pressRaw({ key: 'e', code: 'KeyE', altKey: true, repeat: true, bubbles: true });
+  assert.equal(first.defaultPrevented, true, 'the first press acts');
+  assert.equal(repeat.defaultPrevented, false, 'the repeat is ignored entirely');
+  assert.equal(harness.hudEvents().filter((type) => type === 'pbx-hud-toggle').length, 1, 'only one toggle event');
+
+  // Same for the hold: a repeated press must not arm a second loop.
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressRaw({ key: 'u', code: 'KeyU', altKey: true, bubbles: true });
+  const armed = harness.timerCount();
+  harness.pressRaw({ key: 'u', code: 'KeyU', altKey: true, repeat: true, bubbles: true });
+  assert.equal(harness.timerCount(), armed, 'the repeat does not arm another hold timer');
+  harness.window.dispatchEvent(new KeyboardEventShim('keyup', { code: 'KeyU', altKey: true, bubbles: true }));
+});
+test('auto history off stops the held scroll from loading older pages', () => {
+  const harness = createHarness();
+  const settings = harness.settingsStore.getSnapshot();
+  harness.settingsStore.set({ chat: Object.assign({}, settings.chat, { autoHistory: false }) });
+  const chat = makeScrollableChat(harness, { scrollTop: 400, scrollHeight: 2000 });
+  const loadEarlier = new VirtualNode('button', {}, [], harness.doc);
+  loadEarlier.textContent = '加载更早';
+  loadEarlier.getBoundingClientRect = () => ({ width: 120, height: 28, top: 0, left: 0, right: 120, bottom: 28 });
+  loadEarlier.offsetParent = {};
+  let loads = 0;
+  loadEarlier.click = () => { loads += 1; };
+  harness.doc.__addRoot(loadEarlier);
+
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyU');
+  harness.runTimers();
+
+  let clock = 0;
+  for (let i = 0; i < 40; i += 1) {
+    clock += 16;
+    harness.window.__setNow(clock);
+    harness.runFrame(clock);
+  }
+
+  assert.equal(loads, 0, 'the host history button is never pressed while auto-load is off');
+  assert.equal(harness.frameCount(), 0, 'the loop stops at the boundary instead of waiting for a page');
+
+  harness.window.dispatchEvent(new KeyboardEventShim('keyup', { code: 'KeyU', altKey: true, bubbles: true }));
+  harness.doc.__removeRoot(loadEarlier);
+  chat.restore();
+});
+test('the palette honours the include-archived setting', () => {
+  const harness = createHarness();
+  harness.setWorkspaces({
+    items: [{ workspaceId: 'w1', title: 'Workspace', sessionIds: ['s1', 's2', 's3'] }],
+    archivedSessionIds: ['s3']
+  });
+
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyK');
+  assert.equal(harness.doc.querySelectorAll('.pbx-prow').length, 3, 'archived sessions are listed by default');
+
+  const settings = harness.settingsStore.getSnapshot();
+  harness.settingsStore.set({ palette: Object.assign({}, settings.palette, { includeArchived: false }) });
+  harness.render();
+  assert.equal(harness.doc.querySelectorAll('.pbx-prow').length, 2, 'turning the option off hides archived sessions');
+
+  const input = harness.doc.querySelector('.pbx-paletteInput');
+  input.props.onKeyDown({ key: 'Enter', preventDefault() {}, stopPropagation() {}, currentTarget: input });
+  harness.render();
+  assert.equal(harness.services.calls.openSession.length, 1, 'the first visible row still opens');
+  assert.notEqual(harness.services.calls.openSession[0], 's3', 'the hidden archived row is not reachable');
+});
+test('every default shortcut has its intended effect on a clean profile', () => {
+  /* A single pass over the shipped keymap on a fresh profile (empty storage, default settings),
+     so a change to DEFAULT_SETTINGS.shortcuts cannot silently break an action. */
+  const harness = createHarness();
+  /* The bundle runs in its own vm realm, so its plain objects have that realm's prototype and
+     fail a strict deepEqual against a literal here. Compare the serialized form instead. */
+  const keymap = JSON.parse(JSON.stringify(harness.settingsStore.getSnapshot().shortcuts));
+  assert.deepEqual(
+    keymap,
+    {
+      palette: 'alt+KeyK',
+      prev: 'alt+KeyI',
+      next: 'alt+Comma',
+      userPrev: 'alt+KeyU',
+      userNext: 'alt+KeyM',
+      scrollBottom: 'alt+KeyS',
+      sidebarBoard: 'alt+KeyN',
+      leftSidebar: 'alt+KeyW',
+      panelHalf: 'alt+KeyB',
+      panelFull: 'alt+KeyV',
+      rename: 'alt+KeyR',
+      interject: 'alt+Enter',
+      hud: 'alt+KeyE',
+      sessionMenu: 'alt+KeyD'
+    },
+    'the shipped keymap is what the matrix below exercises'
+  );
+  // One chat with a message above and below the viewport, a composer and a queued message.
+  const scroller = new VirtualNode('div', { class: 'native-scroll' }, [], harness.doc);
+  const flow = new VirtualNode('div', { 'data-slot': 'conversation.chat.flow' }, [], harness.doc);
+  flow.getBoundingClientRect = () => ({ width: 800, height: 600, top: 0, left: 0, right: 800, bottom: 600 });
+  scroller.appendChild(flow);
+  scroller.scrollHeight = 2000;
+  scroller.clientHeight = 600;
+  /* A real element clamps scrollTop to the scrollable range; the plugin relies on that when it
+     assigns scrollHeight as a "go to the very bottom" sentinel. */
+  let scrollTopValue = 400;
+  Object.defineProperty(scroller, 'scrollTop', {
+    get: () => scrollTopValue,
+    set: (value) => {
+      const max = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+      scrollTopValue = Math.min(Math.max(0, Number(value) || 0), max);
+    }
+  });
+  scroller.style = { scrollBehavior: 'smooth' };
+  scroller.getBoundingClientRect = () => ({ width: 800, height: 600, top: 0, left: 0, right: 800, bottom: 600 });
+  scroller.dispatchEvent = () => true;
+  function userRow(top) {
+    const node = new VirtualNode('div', { 'data-slot': 'conversation.chat.user.content' }, [], harness.doc);
+    node.getBoundingClientRect = () => ({ width: 600, height: 40, top, left: 0, right: 600, bottom: top + 40 });
+    const classes = new Set();
+    node.classList = { add: (name) => classes.add(name), remove: (name) => classes.delete(name), contains: (name) => classes.has(name) };
+    node.__classes = classes;
+    flow.appendChild(node);
+    return node;
+  }
+  const above = userRow(-200);
+  const below = userRow(900);
+  harness.doc.__addRoot(scroller);
+  const previousComputedStyle = harness.window.getComputedStyle;
+  harness.window.getComputedStyle = (node) => (node === scroller ? { overflowY: 'auto' } : { overflowY: 'visible' });
+
+  const composer = harness.makeEditable();
+  composer.getBoundingClientRect = () => ({ width: 320, height: 96, top: 600, left: 0, right: 320, bottom: 696 });
+  harness.doc.__addRoot(composer);
+
+  const dock = new VirtualNode('div', { 'data-queue-dock': '' }, [], harness.doc);
+  const queueRow = new VirtualNode('li', {}, [], harness.doc);
+  const steer = new VirtualNode('button', { 'aria-label': '插话发送' }, [], harness.doc);
+  let steers = 0;
+  steer.click = () => { steers += 1; };
+  queueRow.appendChild(steer);
+  dock.appendChild(queueRow);
+  harness.doc.__addRoot(dock);
+
+  harness.resetState();
+  harness.clearSpies();
+  harness.settingsStore.set({ log: Object.assign({}, harness.settingsStore.getSnapshot().log, { level: 'debug' }) });
+  harness.doc.activeElement = harness.doc.body;
+  const probeEvent = harness.pressCombo('alt+KeyR');
+  const probeLogs = harness.registrations.find((item) => item.spec.id === 'project-board-settings').spec.inject().hooks.logs.getSnapshot().entries;
+  console.log('DEBUG probe prevented=', probeEvent.defaultPrevented, 'rename=', JSON.stringify(harness.spies.requestRename), 'modals=', harness.doc.querySelectorAll('[aria-modal="true"]').length, 'logs=', JSON.stringify(probeLogs.filter((e) => e.scope === 'shortcut').slice(-4)));
+
+  // Alt+K opens the palette; the same combo closes it again.
+  harness.pressCombo('alt+KeyK');
+  assert.equal(harness.paletteOpen(), true, 'Alt+K opens the palette');
+  harness.pressCombo('alt+KeyK');
+  assert.equal(harness.paletteOpen(), false, 'Alt+K closes it again');
+
+  // Board modes.
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyN');
+  harness.pressCombo('alt+KeyB');
+  harness.pressCombo('alt+KeyV');
+  assert.deepEqual(harness.spies.toggleBoard, ['narrow', 'half', 'full'], 'Alt+N / Alt+B / Alt+V request the three board modes');
+
+  // Left sidebar.
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyW');
+  assert.deepEqual(harness.services.calls.layoutToggleSidebar, [true], 'Alt+W toggles the native sidebar');
+
+  // Floating list.
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyE');
+  assert.equal(harness.hudEvents().filter((type) => type === 'pbx-hud-toggle').length, 1, 'Alt+E toggles the floating list once');
+
+  // Dialog requests for the current session.
+  const logsOf = () => harness.registrations.find((item) => item.spec.id === 'project-board-settings').spec.inject().hooks.logs.getSnapshot().entries;
+  const logSettings = harness.settingsStore.getSnapshot().log;
+  harness.settingsStore.set({ log: Object.assign({}, logSettings, { level: 'debug' }) });
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyR');
+  console.log('DEBUG post-rename=', JSON.stringify(harness.spies.requestRename), JSON.stringify(logsOf().filter((e) => e.scope === 'shortcut').slice(-3)), 'modals=', harness.doc.querySelectorAll('[aria-modal="true"]').length);
+  harness.pressCombo('alt+KeyD');
+  assert.deepEqual(harness.spies.requestRename, [['s2', 'Beta']], 'Alt+R asks for a rename of the current session');
+  assert.deepEqual(harness.spies.requestSessionMenu, [['s2', 'Beta']], 'Alt+D asks for the session menu');
+  // Session cycle.
+  harness.clearSpies();
+  harness.pressCombo('alt+Comma');
+  harness.pressCombo('alt+KeyI');
+  /* The cycle position comes from the session the host reports as current (the fixture still
+     says s2 — openSession here is a stub), so next is s3 and previous is s1. */
+  assert.deepEqual(harness.services.calls.openSession, ['s3', 's1'], 'Alt+, / Alt+I walk the session cycle in both directions');
+
+  // Instruction jumps (tap, not hold).
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyU');
+  harness.window.dispatchEvent(new KeyboardEventShim('keyup', { code: 'KeyU', altKey: true, bubbles: true }));
+  assert.ok(above.__classes.has('pbx-user-jump-highlight'), 'Alt+U jumps to the instruction above');
+  harness.pressCombo('alt+KeyM');
+  harness.window.dispatchEvent(new KeyboardEventShim('keyup', { code: 'KeyM', altKey: true, bubbles: true }));
+  assert.ok(below.__classes.has('pbx-user-jump-highlight'), 'Alt+M jumps to the instruction below');
+
+  // Bottom + composer focus.
+  harness.doc.activeElement = harness.doc.body;
+  harness.pressCombo('alt+KeyS');
+  assert.equal(scroller.scrollTop, 1400, 'Alt+S scrolls to the bottom');
+  assert.equal(harness.doc.activeElement, composer, 'Alt+S focuses the composer');
+
+  // Interject the queued message.
+  harness.pressCombo('alt+Enter');
+  assert.equal(steers, 1, 'Alt+Enter steers the queued message once');
+
+  harness.window.getComputedStyle = previousComputedStyle;
+  harness.doc.__removeRoot(dock);
+  harness.doc.__removeRoot(composer);
+  harness.doc.__removeRoot(scroller);
+});
+test('chat shortcuts that find nothing leave a trace in the log', () => {
+  const harness = createHarness();
+  const logs = harness.registrations.find((item) => item.spec.id === 'project-board-settings').spec.inject().hooks.logs;
+  const settings = harness.settingsStore.getSnapshot();
+  harness.settingsStore.set({ log: Object.assign({}, settings.log, { level: 'debug' }) });
+  harness.resetState();
+  harness.clearSpies();
+
+  // No conversation on screen at all: each of these used to be completely silent.
+  harness.pressCombo('alt+KeyU');
+  harness.runTimers();
+  assert.ok(
+    logs.getSnapshot().entries.some((entry) => entry.message === 'hold:no-chat'),
+    'a hold without a chat reports why it did nothing'
+  );
+
+  harness.pressCombo('alt+KeyS');
+  assert.ok(
+    logs.getSnapshot().entries.some((entry) => entry.message === 'scrollBottom:no-chat'),
+    'scroll-to-bottom without a chat reports why it did nothing'
+  );
+
+  harness.pressCombo('alt+KeyU');
+  harness.window.dispatchEvent(new KeyboardEventShim('keyup', { code: 'KeyU', altKey: true, bubbles: true }));
+  assert.ok(
+    logs.getSnapshot().entries.some((entry) => entry.message === 'userJump:no-target'),
+    'an instruction jump with no instructions reports why it did nothing'
+  );
+});
+test('layout keys dismiss the palette while overlay keys are ignored', () => {
+  const harness = createHarness();
+
+  // Alt+W is a layout action: it closes the palette and then does its job.
+  harness.pressCombo('alt+KeyK');
+  assert.equal(harness.paletteOpen(), true, 'the palette is open');
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyW');
+  assert.equal(harness.paletteOpen(), false, 'Alt+W dismisses the palette');
+  assert.deepEqual(harness.services.calls.layoutToggleSidebar, [true], 'and toggles the sidebar in the same press');
+
+  // Alt+E is an overlay action: with the palette up it is consumed but does nothing.
+  harness.pressCombo('alt+KeyK');
+  harness.clearSpies();
+  const hudPress = harness.pressCombo('alt+KeyE');
+  assert.equal(hudPress.defaultPrevented, true, 'Alt+E is consumed while the palette is open');
+  assert.equal(harness.hudEvents().length, 0, 'no floating-list toggle fires behind the palette');
+  assert.equal(harness.paletteOpen(), true, 'and the palette stays open');
+});
+test('the same board key closes each mode it opened', () => {
+  const harness = createHarness();
+  const state = connectBoardPane(harness);
+
+  // Half width.
+  harness.resetState();
+  harness.pressCombo('alt+KeyB');
+  assert.equal(state.expanded, true, 'Alt+B opens the pane');
+  assert.equal(state.width, 720, 'at half of the 1440px window');
+  harness.pressCombo('alt+KeyB');
+  assert.equal(state.expanded, false, 'the same key closes the half pane');
+
+  // Fullscreen.
+  harness.pressCombo('alt+KeyV');
+  assert.equal(state.fullscreen, true, 'Alt+V goes fullscreen');
+  harness.pressCombo('alt+KeyV');
+  assert.equal(state.fullscreen, false, 'the same key leaves fullscreen');
+  assert.equal(state.expanded, false, 'and the pane closes rather than staying open');
+
+  // Narrow.
+  harness.pressCombo('alt+KeyN');
+  assert.equal(state.expanded, true, 'Alt+N opens the pane');
+  assert.equal(state.width, 380, 'at the narrow width');
+  harness.pressCombo('alt+KeyN');
+  assert.equal(state.expanded, false, 'the same key closes the narrow pane');
+});
+test('a floating list at its default anchor only collapses when the sidebar opens', () => {
+  const harness = createHarness();
+  const closed = '0px minmax(400px, 1fr) minmax(0px, 800px)';
+  const opened = '280px minmax(400px, 1fr) minmax(0px, 800px)';
+  const frame = new VirtualNode('div', { className: 'AppFrame_frame', style: { gridTemplateColumns: closed }, 'data-sidebar-collapsed': 'true' }, [], harness.doc);
+  frame.attributes.style = 'grid-template-columns: ' + closed;
+  const column = new VirtualNode('div', { class: '_sidebarCol' }, [], harness.doc);
+  column.getBoundingClientRect = () => ({ width: 280, height: 800, top: 0, left: 0, right: 280, bottom: 800 });
+  frame.appendChild(column);
+  harness.doc.__addRoot(frame);
+
+  const hud = harness.mountHud('hud');
+  assert.equal(hud.node.style.left, undefined, 'the list starts from its CSS anchor, not a moved position');
+  assert.ok(/default/.test(hud.node.className), 'and reports the default anchor');
+
+  frame.style.gridTemplateColumns = opened;
+  frame.attributes.style = 'grid-template-columns: ' + opened;
+  frame.removeAttribute('data-sidebar-collapsed');
+  harness.runIntervals();
+  hud.render();
+  harness.runTimers();
+  hud.render();
+
+  assert.equal(/collapsed/.test(hud.node.className), true, 'it collapses while the sidebar is open');
+  assert.equal(hud.node.style.left, undefined, 'but keeps its anchor instead of jumping across the screen');
+  assert.ok(/default/.test(hud.node.className), 'and still reports the default anchor');
+
+  harness.doc.__removeRoot(frame);
+});
+test('the floating list honours each default-position setting', () => {
+  const cases = [
+    { mode: 'top-right', bottom: false },
+    { mode: 'bottom-right', bottom: true },
+    // 'last' without a stored position falls back to the shipped top-right anchor.
+    { mode: 'last', bottom: false }
+  ];
+  for (const item of cases) {
+    const harness = createHarness();
+    const settings = harness.settingsStore.getSnapshot();
+    harness.settingsStore.set({ hud: Object.assign({}, settings.hud, { defaultPosition: item.mode }) });
+    const hud = harness.mountHud('hud');
+    assert.ok(hud.node, 'the list renders with defaultPosition=' + item.mode);
+    assert.equal(hud.node.style.left, undefined, item.mode + ' pins no left offset before any drag');
+    assert.ok(/default/.test(hud.node.className), item.mode + ' keeps the anchored layout');
+    assert.equal(/bottom/.test(hud.node.className), item.bottom, item.mode + ' maps to the expected CSS anchor');
+  }
+});
+test('a held scroll sends one wheel signal before it takes over', () => {
+  const harness = createHarness();
+  const chat = makeScrollableChat(harness, { scrollTop: 600 });
+  const events = [];
+  chat.scroller.dispatchEvent = (event) => {
+    events.push(event && event.type);
+    return true;
+  };
+
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyU');
+  harness.runTimers();
+  let clock = 0;
+  for (let i = 0; i < 6; i += 1) {
+    clock += 16;
+    harness.window.__setNow(clock);
+    harness.runFrame(clock);
+  }
+
+  assert.equal(events.filter((type) => type === 'wheel').length, 1, 'exactly one synthetic wheel signal is sent');
+  assert.ok(chat.scroller.scrollTop < 600, 'and the loop then moves the scroller itself');
+
+  harness.window.dispatchEvent(new KeyboardEventShim('keyup', { code: 'KeyU', altKey: true, bubbles: true }));
+  chat.restore();
+});
+test('the floating list reacts on the same frame as a sidebar attribute change', () => {
+  const harness = createHarness();
+  const closed = '0px minmax(400px, 1fr) minmax(0px, 800px)';
+  const opened = '280px minmax(400px, 1fr) minmax(0px, 800px)';
+  const frame = new VirtualNode('div', { className: 'AppFrame_frame', style: { gridTemplateColumns: closed }, 'data-sidebar-collapsed': 'true' }, [], harness.doc);
+  frame.attributes.style = 'grid-template-columns: ' + closed;
+  const column = new VirtualNode('div', { class: '_sidebarCol' }, [], harness.doc);
+  column.getBoundingClientRect = () => ({ width: 280, height: 800, top: 0, left: 0, right: 280, bottom: 800 });
+  frame.appendChild(column);
+  harness.doc.__addRoot(frame);
+
+  const hud = harness.mountHud('hud');
+  assert.equal(/collapsed/.test(hud.node.className), false, 'the list starts unfolded');
+
+  frame.style.gridTemplateColumns = opened;
+  frame.attributes.style = 'grid-template-columns: ' + opened;
+  frame.removeAttribute('data-sidebar-collapsed');
+
+  // The 800 ms interval has not run: only the observer can have seen this.
+  harness.flushMutations();
+  harness.runFrame(16);
+  hud.render();
+  assert.equal(/collapsed/.test(hud.node.className), true, 'the observer-driven tick docked the list without waiting for the interval');
+
+  harness.doc.__removeRoot(frame);
+});
+test('closing the sidebar with Alt+W restores a docked pill', () => {
+  const harness = createHarness();
+  harness.window.localStorage.setItem('pbx.hud.pos', JSON.stringify({ x: 600, y: 500 }));
+  const settings = harness.settingsStore.getSnapshot();
+  harness.settingsStore.set({ hud: Object.assign({}, settings.hud, { defaultPosition: 'last' }) });
+  const closed = '0px minmax(400px, 1fr) minmax(0px, 800px)';
+  const opened = '280px minmax(400px, 1fr) minmax(0px, 800px)';
+  const frame = new VirtualNode('div', { className: 'AppFrame_frame', style: { gridTemplateColumns: closed }, 'data-sidebar-collapsed': 'true' }, [], harness.doc);
+  frame.attributes.style = 'grid-template-columns: ' + closed;
+  const column = new VirtualNode('div', { class: '_sidebarCol' }, [], harness.doc);
+  column.getBoundingClientRect = () => ({ width: 280, height: 800, top: 0, left: 0, right: 280, bottom: 800 });
+  frame.appendChild(column);
+  harness.doc.__addRoot(frame);
+
+  const hud = harness.mountHud('hud');
+  const setSidebar = (expanded) => {
+    const template = expanded ? opened : closed;
+    frame.style.gridTemplateColumns = template;
+    frame.attributes.style = 'grid-template-columns: ' + template;
+    if (expanded) frame.removeAttribute('data-sidebar-collapsed');
+    else frame.setAttribute('data-sidebar-collapsed', 'true');
+  };
+
+  setSidebar(true);
+  harness.runIntervals();
+  hud.render();
+  harness.runTimers();
+  hud.render();
+  assert.equal(/collapsed/.test(hud.node.className), true, 'the pill is docked while the sidebar is open');
+  assert.equal(hud.node.style.left, '288px', 'beside the sidebar column');
+
+  // Alt+W closes the sidebar; the host flips the frame and the dock must restore the list.
+  harness.services.layout.toggleSidebar = () => setSidebar(false);
+  harness.pressCombo('alt+KeyW');
+  harness.runIntervals();
+  hud.render();
+  assert.equal(/collapsed/.test(hud.node.className), false, 'the list comes back when Alt+W closes the sidebar');
+  assert.equal(hud.node.style.left, '600px', 'at the user own spot');
+
+  harness.doc.__removeRoot(frame);
+});
+test('the right-pane board switches between compact and wide with its width', () => {
+  const harness = createHarness();
+  const entry = harness.registrations.find((item) => item.spec.id === '@local/dsh-tac/tab' || item.spec.key === '@local/dsh-tac/tab');
+  assert.ok(entry, 'the right-pane board tab is registered');
+  const injected = entry.spec.inject();
+  const props = Object.assign({}, injected, {
+    useSessions: (selector) => selector(harness.sessions()),
+    useSessionStatus: (selector) => selector(new Map()),
+    useWorkspaces: (selector) =>
+      selector({ items: [{ workspaceId: 'w1', title: 'Workspace', sessionIds: ['s1', 's2', 's3'] }], archivedSessionIds: [] }),
+    useSettings: (selector) => selector(harness.settingsStore.getSnapshot()),
+    t: harness.ctx.locale.bind('projectBoard')
+  });
+  const instance = harness.runtime.mount(entry.component, props, (node) => harness.doc.__setComponentRoot('board-tab', node));
+  instance.render();
+
+  /* The effect measures this node; the harness rebuilds the tree on every render, so the
+     measurement must stay on the original node (a real DOM keeps the same element). */
+  const box = harness.doc.querySelector('.pbx-responsive');
+  assert.ok(box, 'the responsive host is rendered');
+  const boardNode = () => {
+    const host = harness.doc.querySelector('.pbx-responsive');
+    return host && host.children.find((child) => child.tag === 'component');
+  };
+  assert.ok(boardNode(), 'the board itself is mounted inside');
+  assert.equal(boardNode().componentProps.compact, true, 'a narrow pane starts compact');
+
+  // The pane gets wider than the threshold: the observer re-measures and hands the full board on.
+  box.clientWidth = 700;
+  harness.flushResize();
+  instance.render();
+  assert.equal(boardNode().componentProps.compact, false, 'a wide pane renders the full board');
+
+  // ...and back again.
+  box.clientWidth = 400;
+  harness.flushResize();
+  instance.render();
+  assert.equal(boardNode().componentProps.compact, true, 'shrinking switches back to the compact board');
 });

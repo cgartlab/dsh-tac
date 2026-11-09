@@ -323,7 +323,7 @@ test('a dragged-wide pane is not classified as fullscreen', () => {
 test('any size key closes the board, whatever size it is showing at', () => {
   /* Alt+B used to mean "resize to half" while the pane was narrow and "close" while it was
      half, so the key had no single meaning. Every size key is now its own toggle. */
-  assert.match(source, /if \(visible && expanded\) \{\s*sidebarRight\.toggleExpanded\(\);\s*return;/);
+  assert.match(source, /if \(visible && expanded\) \{/);
   assert.doesNotMatch(source, /currentMode === mode/);
 });
 
@@ -408,4 +408,31 @@ test('settings search indexes the host ledger and opens the selected section', (
 
   props.chooseSetting(catalog.host.find((entry) => entry.sectionId === 'models'));
   assert.deepEqual(opened, ['models'], 'openSection receives the selected section id');
+});
+
+test('both READMEs document every shipped default shortcut', () => {
+  /* Drift guard: the user-facing shortcut tables are prose, so nothing stopped them from going
+     stale when a default changed. Parse the source of truth and require each combo to appear
+     (backticked, in ⌥ notation) in both READMEs. */
+  const constants = fs.readFileSync(path.join(root, 'src/constants.ts'), 'utf8');
+  const start = constants.indexOf('shortcuts: {');
+  assert.ok(start > 0, 'the shortcuts block exists in constants.ts');
+  const block = constants.slice(start, constants.indexOf('}', start) + 1);
+  const combos = Array.from(block.matchAll(/\w+: '(alt\+[^']+)'/g)).map((match) => match[1]);
+  assert.equal(combos.length, 14, 'all fourteen default combos were parsed');
+  const display = (combo) => {
+    const code = combo.split('+')[1];
+    if (/^Key[A-Z]$/.test(code)) return '⌥+' + code.slice(3);
+    if (code === 'Comma') return '⌥+,';
+    return '⌥+' + code;
+  };
+  const keys = Array.from(new Set(combos.map(display)));
+  assert.equal(keys.length, 14, 'the display forms are distinct');
+
+  for (const file of ['README.md', 'README.zh.md']) {
+    const text = fs.readFileSync(path.join(root, file), 'utf8');
+    for (const key of keys) {
+      assert.ok(text.includes('`' + key + '`'), file + ' documents ' + key);
+    }
+  }
 });

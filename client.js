@@ -11,7 +11,7 @@
   var LOG_KEY = "pbx.logs.v1";
   var HUD_POS_KEY = "pbx.hud.pos";
   var HUD_STARTS_KEY = "pbx.hud.starts";
-  var HUD_COLLAPSE_KEY = "pbx.hud.collapse";
+  var HUD_COLLAPSE_KEY = "pbx.hud.collapsed";
   var BOARD_WIDTH_KEY = "pbx.board.width";
   var SHORTCUT_LABEL_KEYS = {
     palette: "settings.shortcut.palette",
@@ -279,6 +279,7 @@
       }
       if (stored.shortcutsVersion !== 1) out.shortcuts = healShortcutConflicts(out.shortcuts);
     }
+    out.shortcuts = healShortcutConflicts(out.shortcuts);
     return out;
   }
   function healShortcutConflicts(shortcuts) {
@@ -876,6 +877,7 @@
       }
     }
     const target = scrollParent || findChatScroller();
+    if (!target) logEvent("debug", "shortcut", "scrollBottom:no-chat", {});
     if (target) {
       const pin = (left) => {
         const node = target.isConnected ? target : findChatScroller();
@@ -989,7 +991,10 @@
   function jumpUserMessage(direction) {
     if (chatJumpState.loading) return;
     const rows = collectUserMessageTargets();
-    if (rows.length === 0) return;
+    if (rows.length === 0) {
+      logEvent("debug", "shortcut", "userJump:no-target", { direction });
+      return;
+    }
     const scroller = findChatScroller();
     const bounds = scroller ? scroller.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
     const viewportTop = Math.max(0, Math.min(bounds.top, window.innerHeight));
@@ -1029,6 +1034,7 @@
   // src/features/chat-scroll.ts
   var HOLD_SCROLL_DELAY = 300;
   var holdScrollState = null;
+  var autoHistoryGate = null;
   function stopHoldScroll(allowJump) {
     const state = holdScrollState;
     if (!state) return;
@@ -1047,7 +1053,10 @@
   }
   function startHoldLoop(state) {
     const initial = findChatScroller();
-    if (!initial) return;
+    if (!initial) {
+      logEvent("debug", "shortcut", "hold:no-chat", { dir: state.dir });
+      return;
+    }
     state.mode = "running";
     state.scroller = initial;
     state.speed = 9;
@@ -1081,10 +1090,21 @@
       return next;
     };
     const now = () => window.performance && typeof window.performance.now === "function" ? window.performance.now() : Date.now();
+    const autoHistoryOn = () => {
+      try {
+        return autoHistoryGate ? autoHistoryGate() !== false : true;
+      } catch (error) {
+        return true;
+      }
+    };
     const schedule = () => {
       state.raf = window.requestAnimationFrame(step);
     };
     const requestOlder = (block) => {
+      if (!autoHistoryOn()) {
+        state.exhausted = true;
+        return false;
+      }
       const node = current();
       if (!node) {
         state.mode = "done";
@@ -1265,7 +1285,9 @@
       if (holdScrollState === state) startHoldLoop(state);
     }, HOLD_SCROLL_DELAY);
   }
-  function installChatScrollListeners() {
+  function installChatScrollListeners(options) {
+    const previousGate = autoHistoryGate;
+    autoHistoryGate = options && typeof options.autoHistory === "function" ? options.autoHistory : null;
     const onKeyUp = (event) => {
       const state = holdScrollState;
       if (!state) return;
@@ -1282,6 +1304,7 @@
     window.addEventListener("blur", onBlur, true);
     document.addEventListener("keydown", onKeyDown, true);
     return () => {
+      autoHistoryGate = previousGate;
       window.removeEventListener("keyup", onKeyUp, true);
       window.removeEventListener("blur", onBlur, true);
       document.removeEventListener("keydown", onKeyDown, true);
@@ -1949,6 +1972,7 @@
     "menu.deleteUnavailable": "This DSH client does not expose session deletion yet. Use archive instead.",
     "menu.failed": "Failed: {message}",
     "menu.busy": "Working…",
+    "settings.selfConflict": "{combo} is bound to {names}; record one of them again.",
     "settings.shortcut.hint": "Click a keycap, then press the new combination; {ctrl} / {alt} / {meta} is required; Esc cancels. Combinations that clash with built-in DSH commands are rejected with a notice.",
     "settings.shortcutNeedModifier": "A shortcut must include {ctrl} / {alt} / {meta}; bare keys are not allowed.",
     "settings.shortcutConflict": "That combination is already used by another action.",
@@ -2237,6 +2261,7 @@
     "menu.deleteUnavailable": "当前 DSH 客户端未开放会话删除接口，请使用归档。",
     "menu.failed": "操作失败：{message}",
     "menu.busy": "处理中…",
+    "settings.selfConflict": "{combo} 同时绑定给了 {names}，请重新录制其中一个。",
     "settings.shortcut.hint": "点击键帽后按下新的组合键；必须包含 {ctrl} / {alt} / {meta}，Esc 取消。与 DSH 内置命令冲突时会拒绝录制并弹出提示。",
     "settings.shortcutNeedModifier": "快捷键必须包含 {ctrl} / {alt} / {meta}，不能使用裸键。",
     "settings.shortcutConflict": "该组合键已被其他功能占用，请换一个。",
@@ -4215,6 +4240,14 @@
   }
 
   // src/features/palette.ts
+  function claimPress(event) {
+    if (event.pbxShortcutActed === true) return false;
+    try {
+      event.pbxShortcutActed = true;
+    } catch (error) {
+    }
+    return true;
+  }
   function Palette(props) {
     const { useSessions, useSessionStatus, useWorkspaces, t, openSession } = props;
     const usePalette = typeof props.usePalette === "function" ? props.usePalette : fallbackHook();
@@ -4432,18 +4465,11 @@
           return;
         }
         if (matchCombo(event, shortcuts.palette)) {
+          if (settingsRef.current.palette.enabled === false) return;
           event.preventDefault();
           event.stopPropagation();
           stopHoldScroll(false);
-          if (event.pbxPaletteActed === true) {
-            logEvent("info", "shortcut", "palette:duplicate", {});
-            return;
-          }
-          try {
-            event.pbxPaletteActed = true;
-          } catch (error) {
-          }
-          if (settingsRef.current.palette.enabled !== false && palette) palette.toggle("open");
+          if (palette) palette.toggle("open");
           return;
         }
         if (paletteOpenRef.current && matchCombo(event, shortcuts.prev)) {
@@ -4466,7 +4492,10 @@
         const isRename = matchCombo(event, shortcuts.rename);
         if (isRename) {
           const target = renameRef.current;
-          if (!target || hasBlockingDialog()) return;
+          if (!target || hasBlockingDialog()) {
+            logEvent("debug", "shortcut", "rename:blocked", { target: Boolean(target), dialog: hasBlockingDialog() });
+            return;
+          }
           stopHoldScroll(false);
           if (paletteOpenRef.current && palette) palette.set({ open: false });
           event.preventDefault();
@@ -4477,7 +4506,10 @@
         const isSessionMenu = matchCombo(event, shortcuts.sessionMenu);
         if (isSessionMenu) {
           const target = renameRef.current;
-          if (!target || hasBlockingDialog()) return;
+          if (!target || hasBlockingDialog()) {
+            logEvent("debug", "shortcut", "sessionMenu:blocked", { target: Boolean(target), dialog: hasBlockingDialog() });
+            return;
+          }
           stopHoldScroll(false);
           if (paletteOpenRef.current && palette) palette.set({ open: false });
           event.preventDefault();
@@ -4486,6 +4518,8 @@
           return;
         }
         if (isSidebarBoard || isPanelHalf || isPanelFull) {
+          const boardSettings = settingsRef.current && settingsRef.current.board;
+          if (boardSettings && boardSettings.enabled === false) return;
           event.preventDefault();
           event.stopPropagation();
           stopHoldScroll(false);
@@ -4531,13 +4565,9 @@
           event.preventDefault();
           event.stopPropagation();
           stopHoldScroll(false);
-          if (event.pbxHudActed === true) {
+          if (!claimPress(event)) {
             logEvent("info", "shortcut", "hud:duplicate", {});
             return;
-          }
-          try {
-            event.pbxHudActed = true;
-          } catch (error) {
           }
           if (typeof props.toggleHud === "function") props.toggleHud();
           return;
@@ -4551,6 +4581,10 @@
           event.preventDefault();
           event.stopPropagation();
           stopHoldScroll(false);
+          if (!claimPress(event)) {
+            logEvent("info", "shortcut", "interject:duplicate", {});
+            return;
+          }
           const acted = interjectEarliestQueued();
           if (!acted && typeof props.notify === "function") {
             props.notify({ tone: "warn", title: "", message: t("toast.interjectNone") });
@@ -4566,6 +4600,10 @@
           }
           event.preventDefault();
           event.stopPropagation();
+          if (!claimPress(event)) {
+            logEvent("info", "shortcut", "hold:duplicate", {});
+            return;
+          }
           beginHoldScroll(isUserNext ? 1 : -1, event.code);
           return;
         }
@@ -4577,6 +4615,10 @@
           event.preventDefault();
           event.stopPropagation();
           stopHoldScroll(false);
+          if (!claimPress(event)) {
+            logEvent("info", "shortcut", "scrollBottom:duplicate", {});
+            return;
+          }
           scrollToComposerAndFocus();
           return;
         }
@@ -4592,6 +4634,10 @@
           if (active.length === 0) return;
           event.preventDefault();
           event.stopPropagation();
+          if (!claimPress(event)) {
+            logEvent("info", "shortcut", "cycle:duplicate", {});
+            return;
+          }
           const position = active.findIndex((row) => row.id === cycle.current);
           const count = active.length;
           const next = isNext ? position < 0 ? 0 : (position + 1) % count : position < 0 ? count - 1 : (position - 1 + count) % count;
@@ -4607,6 +4653,11 @@
       document.addEventListener("keydown", onShortcut, true);
       return () => document.removeEventListener("keydown", onShortcut, true);
     }, [palette]);
+    useEffect(() => {
+      if (!state.open) return void 0;
+      stopHoldScroll(false);
+      return void 0;
+    }, [state.open]);
     if (!mounted) return null;
     const close = () => {
       if (palette) palette.set({ open: false });
@@ -6041,6 +6092,20 @@
     const [recordError, setRecordError] = useState("");
     const [builtinWarnings, setBuiltinWarnings] = useState([]);
     const scannedConflictsRef = useRef(/* @__PURE__ */ new Set());
+    const selfConflicts = (() => {
+      const owners = /* @__PURE__ */ new Map();
+      for (const action of Object.keys(config.shortcuts || {})) {
+        const combo = config.shortcuts[action];
+        if (!owners.has(combo)) owners.set(combo, [action]);
+        else owners.get(combo).push(action);
+      }
+      const found = [];
+      for (const [combo, actions] of owners) {
+        if (actions.length < 2) continue;
+        found.push({ combo, names: actions.map((action) => t(SHORTCUT_LABEL_KEYS[action] || "settings.shortcut.palette")) });
+      }
+      return found;
+    })();
     const useWorkspaces = typeof props.useWorkspaces === "function" ? props.useWorkspaces : fallbackHook();
     const wsSnap = useWorkspaces((value) => value);
     const ghWorkspaces = (wsSnap && wsSnap.items || []).filter((item) => item && item.path);
@@ -6530,6 +6595,13 @@
             "div",
             { key: "warn-" + item.key, className: "pbx-setWarn" },
             t("toast.conflictExisting", { combo: comboDisplay(item.combo), name: item.label })
+          )
+        ),
+        selfConflicts.map(
+          (item) => h(
+            "div",
+            { key: "self-" + item.combo, className: "pbx-setWarn", "data-self-conflict": item.combo },
+            t("settings.selfConflict", { combo: comboDisplay(item.combo), names: item.names.join(" / ") })
           )
         ),
         recordError ? h("div", { className: "pbx-setError" }, recordError) : null,
@@ -7432,12 +7504,8 @@
         if (!sidebarRight) return;
         const visible = rightBoardActive();
         const expanded = boardPanelVisible();
-        if (settingsStore.getSnapshot().board.enabled === false) {
-          if (visible && expanded) sidebarRight.toggleExpanded();
-          logEvent("info", "board", "toggle-disabled", { mode });
-          return;
-        }
         if (visible && expanded) {
+          if (rightbarFullscreen()) toggleRightbarFullscreen();
           sidebarRight.toggleExpanded();
           return;
         }
@@ -7598,18 +7666,17 @@
         window.removeEventListener("unhandledrejection", onRejection);
       };
     }, "project-board: error hooks");
-    ctx.effect(() => installChatScrollListeners(), "project-board: chat scroll listeners");
+    const autoHistoryEnabled = () => {
+      try {
+        const chat = settingsStore.getSnapshot().chat;
+        return !chat || chat.autoHistory !== false;
+      } catch (error) {
+        return true;
+      }
+    };
+    ctx.effect(() => installChatScrollListeners({ autoHistory: autoHistoryEnabled }), "project-board: chat scroll listeners");
     ctx.effect(
-      () => installChatHistoryAutoLoad({
-        enabled: () => {
-          try {
-            const chat = settingsStore.getSnapshot().chat;
-            return !chat || chat.autoHistory !== false;
-          } catch (error) {
-            return true;
-          }
-        }
-      }),
+      () => installChatHistoryAutoLoad({ enabled: autoHistoryEnabled }),
       "project-board: chat history auto-load"
     );
     ctx.effect(() => {
@@ -7622,6 +7689,16 @@
             const combo = snap.shortcuts[key];
             const conflict = findBuiltinConflict(combo);
             if (conflict) conflicts.push({ key, combo, label: conflict.label });
+          }
+          const owners = /* @__PURE__ */ new Map();
+          for (const key of Object.keys(snap.shortcuts || {})) {
+            const combo = snap.shortcuts[key];
+            const list = owners.get(combo);
+            if (list) list.push(key);
+            else owners.set(combo, [key]);
+          }
+          for (const [combo, actions] of owners) {
+            if (actions.length > 1) logEvent("warn", "shortcuts", "duplicate binding", { combo, actions });
           }
           if (conflicts.length === 0) return;
           const first = conflicts[0];

@@ -37,14 +37,24 @@
 
 ## 快捷键
 
+- 失误：`chat.autoHistory` 只传给了被动的 `installChatHistoryAutoLoad`，按住滚动的 `requestOlder` 没接这个开关——关掉设置后按住到顶仍会点「加载更早」→ 规则：一个设置如果影响两条路径（被动滚动监听 + 快捷键循环），必须共用同一个 `enabled` 取值并各自断言；同一类"开关没被快捷键尊重"的问题本轮是第 2 例（上一个是 `board.enabled`） → 证据：本轮修复，`src/features/chat-scroll.ts`、`src/apply.ts`、`test/shortcuts.test.cjs`
+
+- 失误：设置项 `board.enabled` 只挡住了头部入口和看板内容，没挡住 `Alt+N/B/V`——关掉看板后快捷键仍会拉开右侧面板，显示"项目看板已在设置中关闭"的占位，而头部通往看板的入口其实是隐藏的 → 规则：任何"功能开关"都要在**分发器**里同步判断，关闭时把组合键让给应用（与关掉命令面板时的 `Alt+K` 同策略），并配一条"关闭后不消费按键、重新打开立刻恢复"的回归测试 → 证据：本轮修复，`src/features/palette.ts`、`test/shortcuts.test.cjs`
+
+- 失误：按住滚动只在「分发器处理快捷键」的路径里收尾，用鼠标打开命令面板时循环仍在跑——被面板遮住的对话继续滚，而且焦点进入搜索框后松开的 `keyup` 可能收不到 → 规则：任何「抢占键盘 / 遮挡界面」的状态变化（命令面板打开）都必须主动 `stopHoldScroll`，不能只依赖 `keyup` → 证据：本轮修复，`src/features/palette.ts`、`test/shortcuts.test.cjs`
+
 - 失误：曾用"焦点在输入框就跳过快捷键"，而输入框几乎总是聚焦 → 所有 Alt 组合被一刀切掉（0.1.14 修）→ 规则：不按焦点判断，只按"真模态"判断；测试必须覆盖"输入框内 Alt 仍生效"
 - 失误：`Alt+K` 面板把自己当作阻塞弹窗 → 面板打开时方向键与 `Alt+I` / `Alt+,` 全部失效 → 规则：面板自己处理的组合放行，其余吞掉（同时避免 macOS Option 字符泄漏到输入框）
 - 失误：全屏看板盖住整个框架，`Alt+W` 确实切了侧栏但被挡住，表现成"按了没反应" → 规则：先退出 fullscreen 再 toggle，并在日志里记 `leave-fullscreen`（0.2.4）
 - 失误：客户端插件热重载会留下旧监听器，同一次按键被两个 listener 各 toggle 一次，互相抵消 → 规则：在事件对象上打 `pbxSidebarActed` 标记，只有真正生效的 listener 占有这次按键，后来者记 `leftSidebar:duplicate`（0.2.4）
 - 失误：`layout.toggleSidebar` 失败时静默跳过，"接口不存在 / 调了没生效 / 键没到"三种情况分不清 → 规则：开关按 `layout.toggleSidebar` → `layout.panels.toggleSidebar` → `sidebarLeft.toggleExpanded` 兜底并记录实际路径；260ms 后核对布局，记 `applied` / `no-change` / `unverified`（0.2.1、0.2.3）
+- 失误：热重载遗留的旧监听器会让"全局副作用型"快捷键执行两次——`Alt+E` 连发两个 `pbx-hud-toggle`（开又关，看起来没反应）、`Alt+U` 起两个 rAF 循环（滚动速度翻倍）、`Alt+Enter` 连点两次插话按钮（第二次只剩一条"没有排队消息"的误报）→ 规则：凡有全局副作用的动作（HUD、按住滚动、插话、回到底部、会话循环）执行前都用 `pbxShortcutActed` 认领这次按键；调色板 / 重命名 / 会话菜单的 store 属于插件实例，旧实例切换对用户不可见，**不要**认领（否则活跃实例会被误跳过）→ 证据：本轮修复，`test/shortcuts.test.cjs` 的 Alt+E / Alt+U 重复投递回归
 - 失误：`pbxSidebarActed` 重复检测只加给了 `Alt+W`（leftSidebar），`Alt+N/B/V`（board）没有 → 热重载后 leaked 监听器让 Alt+N toggle 两次互相取消，用户看到"没反应" → 规则：给一个快捷键加重复检测时，检查**所有同类快捷键**是否都需要；board 快捷键用 `pbxBoardActed` 标记，与 sidebar 同模式（0.4.0）
+- 失误：`healShortcutConflicts` 只挂在 `shortcutsVersion !== 1` 的一次性迁移里，迁移标记写完之后再出现的重复绑定（新动作的默认键撞上用户改过的键、手改存储）永远不会被修，表现为"其中一个快捷键按了没反应"，而且设置页只在录制时报冲突、加载时不报 → 规则：冲突自愈必须在每次 `mergeSettings` 时**幂等**执行（仅修重复，唯一绑定原样通过），并配一条"加载后同一组合只有一个占用者"的回归测试；自愈不了的残留（两个动作的默认键都被其他动作占用）必须在设置页 `data-self-conflict` 行显式列出 + 启动日志记 `duplicate binding` 警告，不能静默留一个死快捷键 → 证据：本轮修复，`src/core/settings.ts`、`src/features/settings.ts`、`src/apply.ts`、`test/shortcuts.test.cjs`
 
 ## 原生侧栏、看板与 HUD 状态
+
+- 失误：`toggleNativeBoard('full')` 的「同键关闭」只调了 `toggleExpanded()`，没退出全屏展示态——与 0.2.4 的 `Alt+W` 是同一个坑（面板收起但全屏层还盖着页面）→ 规则：任何「收起 / 切换」路径都先退出 fullscreen 再收面板；写「同键关闭」的断言时不能只断言面板收起，还要断言全屏态被清掉 → 证据：本轮文档审计时补的 `alt+KeyV` 两次按下测试，`src/apply.ts`
 
 - 失误：用侧栏列宽判断"开没开"，读到的是宽度动画的中途值，HUD 让位滞后半秒或落错位置 → 规则：读帧的 `grid-template-columns` 第一轨 + `data-sidebar-collapsed`；只有读不到网格才退回测量宽度，且要求连续两次读数一致（0.2.2）
 - 失误：dock 的跟随定时器（80ms / 320ms）在侧栏已经关闭后仍在跑，把胶囊挪到旧的贴边位置 → 规则：dock/restore 之间所有定时器集中 `clear`，并用 `autoDock` 标志短路后续定位
@@ -84,15 +94,22 @@
 
 ## 验证与调试
 
+- 失误：测试把共享夹具 `SESSION_FIXTURE.byId.s2` 存成**引用**再 `delete retainedBy`，"还原"时赋回的还是被改过的同一个对象 → 这个文件里**之后所有测试都在"没有当前会话"的状态下跑**，`Alt+R` / `Alt+D` 那几条"没有重复弹窗"的断言一直是空过的（本轮全量冒烟才发现） → 规则：共享夹具的保存必须**深拷贝**（`JSON.parse(JSON.stringify(x))`）或用 `try/finally` 重新构造；更彻底的做法是让 harness 自己持有夹具副本（`createHarness` 深拷贝 + `patchSessions(mutate)` 每次从常量重建），测试**不允许**直接改模块级夹具 → 证据：`test/shortcuts.test.cjs`
+- 失误：虚拟滚动容器把 `scrollTop` 当普通字段，而插件用 `node.scrollTop = node.scrollHeight` 这个"到底"哨兵依赖浏览器**自动 clamp**，测试里就成了 `2000`（越界值），看起来像 bug → 规则：夹具里给 `scrollTop` 写 setter 并按 `scrollHeight - clientHeight` 限制，和真实元素一致 → 证据：本轮矩阵测试
+- 失误：多条快捷键在"匹配到了但目标不存在"时完全静默（没有对话时 `Alt+U`/`Alt+S`、没有指令时跳转、没有当前会话时 `Alt+R`），真机上用户只会看到"按键没反应"，日志也帮不上忙 → 规则：凡"匹配后无事可做"的分支都留一条 debug 日志（`hold:no-chat` / `scrollBottom:no-chat` / `userJump:no-target` / `rename:blocked` 等），让每一次按键都能在日志里找到归属 → 证据：`test/shortcuts.test.cjs` 的 no-target 测试
+- 失误：沙箱里没有 `WheelEvent` 构造器，而插件在 `try/catch` 里 `new WheelEvent(...)` 发送"解除滚动锚点"信号——于是这条特性在测试中**从未执行过**，测试一直绿只是因为它被 catch 吞掉了 → 规则：`vm` 沙箱要提供浏览器里真实存在的全局构造器（`WheelEvent` 等），并给这类"workaround 分支"补一条可观测断言；同理，"测试绿"不等于"这行代码跑过" → 证据：本轮补的 wheel 信号测试
+
 - 失误：想用 SendKeys / AppActivate / PostMessage 往 DSH 窗口注入快捷键来验证，Windows 前台锁 + 无地址化的 Chromium 子窗口，全部失败 → 规则：快捷键只能由人按，Agent 只读插件日志验证；日志必须有 scope 粒度（`shortcut` / `sidebar` / `hud`）
 - 失误：想用浏览器客户端 `?token=` 连 `127.0.0.1` 验证，桌面端 token 是启动时临时签发 → 401 → 规则：不用 web 客户端代跑验证，走桌面端插件日志
 - 失误：日志级别停在默认档时，`Alt+W` 的 info 记录看不到 → 规则：排查前先把「日志与排查」级别调到「常规」，或直接读 localStorage 里的 `entries`
 - 失误：只写"修好了"而没有可复现的判断依据，下一轮又是猜 → 规则：每次行为修复配一条回归测试（`test/` 下两个测试文件的回归测试就是地基），并在 `docs/architecture.md` 留判定口径
+- 失误：构造宿主布局夹具时把 `grid-template-columns: 280px …` 整串塞进 `frame.style.gridTemplateColumns`，而插件的 `readExpanded()` 用 `parseFloat` 读它 → `NaN` → 悄悄退到"量列宽"分支，测试看着绿其实没走 grid 目标态；同样的问题让"侧栏关闭后 HUD 复位"一直测不出来 → 规则：夹具必须还原 DOM 语义——`element.style.<prop>` 只放**值**，整条声明放 `getAttribute('style')`，否则测的是回落路径而不是主路径
 
 ## 本机网络与工具
 
-- 失误：本机 `git` 全局配了 `http.proxy = http://127.0.0.1:7900`，本地代理没启动时 `git fetch/push` 直接失败（`Failed to connect to github.com port 443 via 127.0.0.1`），而 `gh` 走 API 一切正常，很容易误判成"仓库/权限坏了" → 规则：先看 `git config --get http.proxy` 与端口是否有监听；绕过用 `git -c http.proxy= -c https.proxy= …`，大 pack 传输再叠加 `-c http.version=HTTP/1.1`（2026-11-06 实测：HTTP/2 直连会被 reset，HTTP/1.1 能过）
+- 失误：本机 `git` 全局配了 HTTP 代理，本地代理没启动时 `git fetch/push` 直接失败（`Failed to connect to github.com port 443`），而 `gh` 走 API 一切正常，很容易误判成"仓库/权限坏了" → 规则：先看 `git config --get http.proxy` 与端口是否有监听；绕过用 `git -c http.proxy= -c https.proxy= …`，大 pack 传输再叠加 `-c http.version=HTTP/1.1`（2026-11-06 实测：HTTP/2 直连会被 reset，HTTP/1.1 能过）
 - 失误：`git pull` 会在网络阶段再 fetch 一次，网络抖动时明明已经 `fetch` 成功却 pull 失败 → 规则：已经 `git fetch` 到本地后，用 `git merge --ff-only origin/main` 完成快进，不重复走网络
+- 失误：用占位符写提交身份时抄错一个字符（`{{EMAIL_…}}` 少一位），git 不会校验，commit author 变成未替换的字面量；两次都是推送前才靠 `git log -1 --format='%an <%ae>'` 发现 → 规则：每次 `commit` 之后、`push` 之前都跑一次 `git log -1 --format='%an <%ae>'`；发现错了用 `git commit --amend --no-edit --reset-author`（amend 会保留原 author，必须带 `--reset-author`），已推送的不要改写
 
 ## 文案、设置与迁移
 
@@ -112,3 +129,7 @@
 ## 字典占位符与产物同步
 
 - 失误：0.3.2 把 `sort.hint` 等字典改成 `{shift}` 占位符、settings.ts 渲染点已传 `MODIFIER_LABELS`，但 `src/features/board.ts` 的 3 个 `t('sort.hint')` 漏传第二参数（列头 tooltip 显示字面量 `{shift}`）；同时合并含 src 改动的 PR 时 `client.js` 没跟着重建，旧产物仍是修复前代码 → main CI step 7「The committed bundle matches src/」失败、`npm test` 在 HEAD 产物上 18 条中 2 条失败，运行时没有任何修复 → 规则：改字典占位符后必须 grep 全部 `t('<key>')` 渲染点并逐一传参；合并任何含 `src/` 改动的 PR 后必须 `npm run build`、`git diff --exit-code -- client.js index.js`，并确认 CI 的「产物一致」step 绿 → 证据：fe3f948，`src/features/board.ts`、`src/features/settings.ts`、`src/i18n/zh.ts`、`src/i18n/en.ts`、`test/load.test.cjs`、`client.js`
+
+## 发版与合并
+
+- 失误：在 `79e9d54` 解决 CHANGELOG 冲突时整体取了旧文件，把已随 v0.3.2 发布的 13 条又写回 `[未发布]`，同一批条目在两个小节重复——下一个版本会再"发"一遍已发布内容，读者也无法判断哪些真的没发 → 规则：解决 CHANGELOG 冲突以**已发布 tag 的版本小节**为准；发版后再合并分支，先按「条目前 40 字」比对 `[未发布]` 与各版本小节，重叠即删 → 证据：`76e6d81`（折叠）、`79e9d54`（merge 回退）、本轮修复

@@ -23,7 +23,9 @@ reading, and desktop-class task notifications.
   the board.
 - **Floating session HUD** — live active/recent sessions with timers, attention badges,
   automation markers, drag-to-move, and an animated pill ⇄ list collapse; while the native
-  left sidebar is open it tucks into the bottom-right corner and returns when that closes. One stable order:
+  left sidebar is open the list collapses to a pill that sits just right of that sidebar and
+  returns when it closes (a list you dragged keeps its own vertical spot; one still at its
+  default anchor only collapses, it does not jump across the screen). One stable order:
   active sessions first, most recent activity first within a group; switching sessions
   highlights the new row without reshuffling the list, and `⌥+I` / `⌥+,` cycle in
   exactly that order.
@@ -42,9 +44,9 @@ reading, and desktop-class task notifications.
   all, a warn toast points you to the sidebar — a partial success is never silent. Sections
   the host or other plugins add later appear in search without a plugin update.
 - **Hold-to-scroll reading** — the conversation scrolls smoothly while the key is held,
-  loads older history automatically before reaching the boundary, and falls back to anchor
-  stepping if the chat view reverts a position write. Holding `⌥+M` down to the end
-  activates the composer so a reply can be typed immediately.
+  loads older history automatically before reaching the boundary (when "history on scroll"
+  is enabled), and falls back to anchor stepping if the chat view reverts a position write.
+  Holding `⌥+M` down to the end activates the composer so a reply can be typed immediately.
 - **History on scroll** — scrolling a long conversation to the top loads the previous page
   of older messages without clicking "Load earlier" every time. On by default, switchable
   off in settings. It drives the host's own pager, so its loading and error feedback and its
@@ -73,7 +75,7 @@ physical Option key. On Windows and Linux the same combinations are shown as `Al
 | `⌥+I` / `⌥+,` | Previous / next session |
 | `⌥+U` / `⌥+M` | Previous / next user instruction (tap to jump, hold to scroll) |
 | `⌥+S` | Scroll to bottom and focus the composer |
-| `⌥+D` | Session actions dialog (archive, cancel a running turn, delete where supported) |
+| `⌥+D` | Session actions dialog (archive; delete where the host exposes it) |
 | `⌥+N` / `⌥+B` / `⌥+V` | Board at narrow / medium / fullscreen; same key closes |
 | `⌥+W` | Show / hide the native left sidebar; leaves a fullscreen board first |
 | `⌥+R` | Rename the current session |
@@ -120,9 +122,8 @@ runtime dependencies of its own; host-half `index.js` is intentionally a no-op.
 
 ## Known limitations
 
-- Session deletion depends on the client contract; this build of DeepSeek Harness only
-  exposes archive and turn cancellation, so the session dialog disables delete and points
-  to archive instead.
+- Session deletion depends on the client contract; this build of DeepSeek Harness does not
+  expose it, so the session dialog disables delete and points to archive instead.
 - Archiving a session that is still running is rejected by the host; the dialog surfaces
   the error rather than forcing it.
 - System notifications follow the OS/browser notification permission and the harness
