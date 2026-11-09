@@ -17,7 +17,10 @@ reading, and desktop-class task notifications.
   icon. The project view has 6 attribute columns (session count / Open Issue / Open PR /
   local version / latest release / last activity). **Click a project row to expand its
   session list inline below** (accordion-style, no page flip). Opens at narrow (380 px),
-  medium (50 vw) or native fullscreen; the same key closes it.
+  medium (50 vw) or native fullscreen — each size key is its own toggle: any of them closes an
+  open board, and a closed board opens at the size you pressed. Past 200 sessions the list
+  renders in batches with a "show more" control. The right-pane board and the fullscreen main
+  panel are separate instances, each remembering its own tab.
   The pane's open state and size belong to the workspace, not to each conversation:
   switching sessions only switches the conversation and never re-opens, closes or resizes
   the board.
@@ -76,11 +79,15 @@ physical Option key. On Windows and Linux the same combinations are shown as `Al
 | `⌥+U` / `⌥+M` | Previous / next user instruction (tap to jump, hold to scroll) |
 | `⌥+S` | Scroll to bottom and focus the composer |
 | `⌥+D` | Session actions dialog (archive; delete where the host exposes it) |
-| `⌥+N` / `⌥+B` / `⌥+V` | Board at narrow / medium / fullscreen; same key closes |
+| `⌥+N` / `⌥+B` / `⌥+V` | Board at narrow / medium / fullscreen. Any of them closes an open board; a closed board opens at the size you pressed |
 | `⌥+W` | Show / hide the native left sidebar; leaves a fullscreen board first |
 | `⌥+R` | Rename the current session |
 | `⌥+E` | Collapse / expand the floating session list |
 | `⌥+Enter` | Steer the earliest queued message into the running turn |
+
+While the command palette is open, **window-level** keys (board / left sidebar / floating list /
+rename / session menu) dismiss it and then act; **conversation-level** keys (steer, hold-scroll,
+scroll-to-bottom, session cycle) stand down so typing is never interrupted.
 
 ## Requirements
 
