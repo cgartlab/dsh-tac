@@ -62,7 +62,7 @@
 - [ ] 语义无重叠、无"同键不同义"的困惑
 - [ ] 输入框聚焦时字母键不误触；Alt 组合仍可达
 - [ ] 真实对话框（宿主 modal）抑制快捷键；插件自己的 palette 不抑制关闭键
-- [ ] palette 打开时：让位的键一致，仍生效的键一致
+- [ ] palette 打开时：**窗口级键**（看板 / 左侧栏 / HUD / 重命名 / 会话菜单）一律「关闭面板 + 执行」；**对话级键**（插话 / 按住滚动 / 跳到底 / 会话循环）一律「消费但不动」——同一类必须完全一致
 - [ ] 重复监听器守卫（`pbxSidebarActed` / `pbxBoardActed`）覆盖所有 toggle 键
 - [ ] 一次按键不会同时触发宿主默认行为（`preventDefault` 到位）
 
@@ -77,7 +77,8 @@
 ## 5. 设置（E）
 
 - [ ] 旧配置缺字段时不崩（`readSection` 回落默认）
-- [ ] 依赖矛盾已处理：`board.enabled=false` / `hud.enabled=false` / `notify.enabled=false` / `palette.enabled=false` 下相关项的状态
+- [ ] 依赖矛盾已处理：`board.enabled=false` / `hud.enabled=false` / `notify.enabled=false` / `palette.enabled=false` / `log.enabled=false` 时，从属项**变灰并禁用**，开关本身仍可点
+- [ ] `hud.recentEnabled=false` 时，仅「最近会话条数 / 排除自动」被禁用
 - [ ] 数值边界（越界 / NaN / 负数）不产生非法 UI
 - [ ] 「恢复默认」覆盖敏感项（token / repo 映射）且行为明确
 
@@ -123,3 +124,4 @@
 | 打开会话 | 看板行 / HUD 行 / palette / 左侧栏 | 是否都切换 + 关闭遮罩 |
 | 关闭面板 | 快捷键 / 面板关闭按钮 / 「返回对话」 | 结果是否相同 |
 | 会话操作 | HUD 悬停 / 会话菜单 / 快捷键 | 是否同一套动作 |
+| 打开看板（已开） | 菜单 / 快捷键 / 按钮 | 是否都**保留**当前 tab，不重置 |

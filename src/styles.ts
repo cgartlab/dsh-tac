@@ -347,6 +347,7 @@ export const CSS: string = [
       '.pbx-compactHead{display:flex;align-items:center;gap:8px;margin-bottom:10px;min-width:0}',
       '.pbx-compactTabs{display:flex;align-items:center;gap:2px;margin-bottom:10px;flex-wrap:wrap}',
       '.pbx-moreCell{padding:8px 10px;text-align:center}',
+      '.pbx-setRowOff{opacity:.55}',
       '.pbx-showMore{margin:8px auto 0;display:block}',
       '.pbx-compactTitle{display:flex;align-items:center;gap:7px;font-weight:600;font-size:14px;color:var(--dsw-alias-label-primary);flex:1;min-width:0;overflow:hidden}',
       '.pbx-compactTitle>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}',

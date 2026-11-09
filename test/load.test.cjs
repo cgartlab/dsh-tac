@@ -436,3 +436,25 @@ test('both READMEs document every shipped default shortcut', () => {
     }
   }
 });
+
+test('timestamps older than a year read in years, not thousands of days', () => {
+  /* "1635 days" stops communicating anything past the first year, so the relative-time helper
+     switches to a coarse year count. */
+  assert.match(source, /"time\.year"/);
+  assert.match(source, /days < 365/);
+  assert.match(source, /Math\.floor\(days \/ 365\)/);
+});
+
+test('the pane guard compares widths, not just the size bucket', () => {
+  /* The bucket is coarse (narrow covers everything up to 460), so two panes in the same bucket
+     can be 40px apart. Claiming "already the same" on the bucket alone silently replaced the
+     width the reader chose with whatever the bucket restores to. */
+  assert.match(source, /Math\.abs\(a\.width - b\.width\) <= 24/);
+});
+
+test('the two board surfaces keep separate view requests', () => {
+  /* A right-pane open must not drag the main panel's board back to the project view. */
+  assert.match(source, /boardViewStores/);
+  assert.match(source, /main: createUiStore/);
+  assert.match(source, /requestBoardView\("projects", "main"\)/);
+});

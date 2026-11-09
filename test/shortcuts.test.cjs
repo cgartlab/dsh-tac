@@ -1632,15 +1632,14 @@ test('palette open: every other default combo is consumed without acting', () =>
   const composer = harness.makeEditable();
   harness.doc.__addRoot(composer);
 
-  // Policy (docs/architecture.md): while the palette is open, only its own keys work. The
-  // rename / session-menu / board keys dismiss it first and then act once (covered above);
-  // every other combo must be consumed and ignored so no Option character or side effect
-  // reaches the page.
+  // Policy (docs/architecture.md): while the palette is open, window-level keys (palette /
+  // board / left sidebar / HUD / rename / session menu) dismiss it and then act once, while
+  // conversation-level keys are consumed and ignored so no Option character or side effect
+  // reaches the chat underneath.
   const inert = [
     { id: 'userPrev', extra: (start) => assert.equal(holdTimers(harness, start), 0, 'Alt+U arms no hold while the palette is open') },
     { id: 'userNext', extra: (start) => assert.equal(holdTimers(harness, start), 0, 'Alt+M arms no hold while the palette is open') },
     { id: 'scrollBottom', extra: () => assert.notEqual(harness.doc.activeElement, composer, 'Alt+S does not focus the composer behind the palette') },
-    { id: 'hud', extra: () => assert.deepEqual(harness.hudEvents(), [], 'Alt+E dispatches no HUD toggle behind the palette') },
     { id: 'interject', extra: () => assert.equal(harness.spies.notify.length, 0, 'Alt+Enter does not report an empty queue behind the palette') }
   ];
 
@@ -1660,13 +1659,20 @@ test('palette open: every other default combo is consumed without acting', () =>
     item.extra(start);
   }
 
-  // The sidebar key follows the board policy: dismiss the palette, then toggle once.
+  // The sidebar and HUD keys follow the board policy: dismiss the palette, then act once.
   harness.resetState();
   harness.clearSpies();
   harness.pressCombo(shortcuts.palette);
   harness.pressCombo(shortcuts.leftSidebar);
   assert.equal(harness.paletteOpen(), false, 'Alt+W dismisses the palette');
   assert.deepEqual(harness.spies.toggleLeftSidebar, [true], 'Alt+W still toggles the sidebar once');
+
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo(shortcuts.palette);
+  harness.pressCombo(shortcuts.hud);
+  assert.equal(harness.paletteOpen(), false, 'Alt+E dismisses the palette too');
+  assert.equal(harness.hudEvents().length, 1, 'Alt+E still toggles the floating list once');
 });
 test('Alt+Enter steers the earliest queued message exactly once', () => {
   const harness = createHarness();
@@ -2114,9 +2120,13 @@ test('the session cycle starts from an end when the current session is not liste
 });
 /* ------------------------------------------------------- view persistence + HUD */
 
-function mountBoardPanel(harness) {
-  const entry = harness.registrations.find((item) => item.spec.key === 'project-board');
-  assert.ok(entry, 'the main board panel is registered');
+function mountBoardPanel(harness, surface) {
+  /* The right-pane tab and the main panel are independent boards with independent view state,
+     so the harness mounts whichever surface a test needs. Default: the right pane, which is
+     the one the board shortcuts drive. */
+  const name = surface === 'main' ? 'main' : 'sidebar.right.pane.tab';
+  const entry = harness.registrations.find((item) => item.spec.name === name);
+  assert.ok(entry, 'the ' + name + ' board is registered');
   const injected = entry.spec.inject();
   const props = Object.assign({}, injected, {
     useSessions: (selector) => selector(harness.sessions()),
@@ -2133,7 +2143,7 @@ function mountBoardPanel(harness) {
 
 test('opening the board by shortcut lands on the project view', () => {
   const harness = createHarness();
-  const board = mountBoardPanel(harness);
+  const board = mountBoardPanel(harness, 'main');
   const tabs = () => harness.doc.querySelectorAll('.pbx-tab');
   assert.equal(tabs().length, 2, 'the board renders its two view tabs');
   assert.equal(tabs()[0].getAttribute('aria-selected'), 'true', 'the configured default view is projects');
@@ -2143,14 +2153,18 @@ test('opening the board by shortcut lands on the project view', () => {
   board.render();
   assert.equal(tabs()[1].getAttribute('aria-selected'), 'true', 'the session view is selected');
 
-  // Opening the board through a shortcut must land on projects even though the mounted
-  // component still holds the session view in its own state.
+  // Opening the right-pane board through a shortcut must land on projects even though the
+  // mounted component still holds the session view in its own state. View requests are per
+  // surface now: the main panel must not be dragged back to projects by a shortcut aimed at
+  // the right pane.
   harness.resetState();
   harness.clearSpies();
   harness.pressCombo('alt+KeyN');
-  board.render();
-  assert.equal(tabs()[0].getAttribute('aria-selected'), 'true', 'a shortcut open switches back to the project view');
+  const rightEntry = harness.registrations.find((item) => item.spec.name === 'sidebar.right.pane.tab');
+  assert.equal(rightEntry.spec.inject().viewRequestStore.getSnapshot().view, 'projects', 'the right pane is asked for the project view');
   assert.deepEqual(harness.spies.toggleBoard, ['narrow'], 'the board was opened once');
+  board.render();
+  assert.equal(tabs()[1].getAttribute('aria-selected'), 'true', 'the main panel keeps the view the reader picked');
 });
 
 test('Alt+E turns a disabled floating list back on', () => {
@@ -3691,7 +3705,7 @@ test('chat shortcuts that find nothing leave a trace in the log', () => {
     'an instruction jump with no instructions reports why it did nothing'
   );
 });
-test('layout keys dismiss the palette while overlay keys are ignored', () => {
+test('window-level keys dismiss the palette and act, conversation keys stand down', () => {
   const harness = createHarness();
 
   // Alt+W is a layout action: it closes the palette and then does its job.
@@ -3702,13 +3716,23 @@ test('layout keys dismiss the palette while overlay keys are ignored', () => {
   assert.equal(harness.paletteOpen(), false, 'Alt+W dismisses the palette');
   assert.deepEqual(harness.services.calls.layoutToggleSidebar, [true], 'and toggles the sidebar in the same press');
 
-  // Alt+E is an overlay action: with the palette up it is consumed but does nothing.
+  // Alt+E is a window-level toggle too, so it behaves the same way: the palette closes and the
+  // floating list actually toggles, instead of the press being swallowed.
   harness.pressCombo('alt+KeyK');
+  assert.equal(harness.paletteOpen(), true, 'the palette is open again');
   harness.clearSpies();
   const hudPress = harness.pressCombo('alt+KeyE');
-  assert.equal(hudPress.defaultPrevented, true, 'Alt+E is consumed while the palette is open');
-  assert.equal(harness.hudEvents().length, 0, 'no floating-list toggle fires behind the palette');
-  assert.equal(harness.paletteOpen(), true, 'and the palette stays open');
+  assert.equal(hudPress.defaultPrevented, true, 'Alt+E is consumed');
+  assert.equal(harness.paletteOpen(), false, 'and dismisses the palette like the other window keys');
+  assert.equal(harness.hudEvents().length, 1, 'the floating list toggles in the same press');
+
+  // Alt+U is a conversation-level action: it acts on the chat underneath the modal, so it
+  // stands down rather than interrupting typing for something the reader cannot see.
+  harness.pressCombo('alt+KeyK');
+  harness.clearSpies();
+  const holdPress = harness.pressCombo('alt+KeyU');
+  assert.equal(holdPress.defaultPrevented, true, 'Alt+U is consumed while the palette is open');
+  assert.equal(harness.paletteOpen(), true, 'the palette stays open');
 });
 test('the same board key closes each mode it opened', () => {
   const harness = createHarness();
@@ -3914,4 +3938,30 @@ test('the right-pane board switches between compact and wide with its width', ()
   harness.flushResize();
   instance.render();
   assert.equal(boardNode().componentProps.compact, true, 'shrinking switches back to the compact board');
+});
+
+test('a switched-off feature greys out its own sub-settings', () => {
+  const harness = createHarness();
+  const rowFor = (key) => harness.doc.querySelector('[data-setting="' + key + '"]');
+  const controlFor = (key) => {
+    const row = rowFor(key);
+    return row ? row.querySelector('input, select, button') : null;
+  };
+
+  // Everything is on by default: the board's own rows are editable.
+  mountSettingsPage(harness);
+  assert.ok(rowFor('board-wideThreshold'), 'the board width row renders');
+  assert.equal(/pbx-setRowOff/.test(rowFor('board-wideThreshold').className), false, 'an enabled board leaves its rows editable');
+  assert.notEqual(controlFor('board-wideThreshold').props.disabled, true, 'the width input is enabled');
+
+  // Switch the board off: its own rows can no longer do anything, so they are greyed out and
+  // disabled rather than silently accepting edits that have no effect.
+  const settings = harness.settingsStore.getSnapshot();
+  harness.settingsStore.set({ board: Object.assign({}, settings.board, { enabled: false }) });
+  mountSettingsPage(harness);
+  assert.equal(/pbx-setRowOff/.test(rowFor('board-wideThreshold').className), true, 'the width row is greyed out');
+  assert.equal(controlFor('board-wideThreshold').props.disabled, true, 'the width input is disabled');
+  assert.equal(controlFor('board-defaultView').props.disabled, true, 'the default view select is disabled');
+  // The switch itself must stay reachable or there is no way back.
+  assert.notEqual(controlFor('board-enabled').props.disabled, true, 'the board switch itself stays enabled');
 });

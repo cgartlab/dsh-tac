@@ -48,7 +48,15 @@ export function BoardSessionGuard(props: BoardSessionGuardProps): unknown {
   const sameState = (left: BoardState | null | undefined, right: BoardState | null | undefined): boolean => {
     const a = left || { open: false, mode: null };
     const b = right || { open: false, mode: null };
-    return Boolean(a.open) === Boolean(b.open) && (!a.open || a.mode === b.mode);
+    if (Boolean(a.open) !== Boolean(b.open)) return false;
+    if (!a.open) return true;
+    if (a.mode !== b.mode) return false;
+    /* The mode bucket is coarse on purpose (narrow covers everything up to 460), so two panes
+       in the same bucket can still be 40px apart. Only claim "already the same" when the widths
+       agree too; otherwise the recorded width the reader chose is silently replaced by whatever
+       the bucket happens to restore to. */
+    if (typeof a.width === 'number' && typeof b.width === 'number') return Math.abs(a.width - b.width) <= 24;
+    return true;
   };
 
   useEffect(() => {

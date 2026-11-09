@@ -1727,6 +1727,7 @@
     ".pbx-compactHead{display:flex;align-items:center;gap:8px;margin-bottom:10px;min-width:0}",
     ".pbx-compactTabs{display:flex;align-items:center;gap:2px;margin-bottom:10px;flex-wrap:wrap}",
     ".pbx-moreCell{padding:8px 10px;text-align:center}",
+    ".pbx-setRowOff{opacity:.55}",
     ".pbx-showMore{margin:8px auto 0;display:block}",
     ".pbx-compactTitle{display:flex;align-items:center;gap:7px;font-weight:600;font-size:14px;color:var(--dsw-alias-label-primary);flex:1;min-width:0;overflow:hidden}",
     ".pbx-compactTitle>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}",
@@ -2113,7 +2114,8 @@
     "time.now": "now",
     "time.min": "{n}min",
     "time.hour": "{n}h",
-    "time.day": "{n}d"
+    "time.day": "{n}d",
+    "time.year": "{n}y"
   };
 
   // src/i18n/zh.ts
@@ -2402,7 +2404,8 @@
     "time.now": "刚刚",
     "time.min": "{n}分钟",
     "time.hour": "{n}小时",
-    "time.day": "{n}天"
+    "time.day": "{n}天",
+    "time.year": "{n}年"
   };
 
   // src/runtime.ts
@@ -2669,7 +2672,9 @@
     if (minutes < 60) return t("time.min", { n: minutes });
     const hours = Math.floor(minutes / 60);
     if (hours < 24) return t("time.hour", { n: hours });
-    return t("time.day", { n: Math.floor(hours / 24) });
+    const days = Math.floor(hours / 24);
+    if (days < 365) return t("time.day", { n: days });
+    return t("time.year", { n: Math.floor(days / 365) });
   }
   var PROJECT_COLUMNS = [
     { key: "total", labelKey: "settings.pc.total", type: "#", hintKey: "col.hint.total" },
@@ -4558,10 +4563,7 @@
         }
         const isHudToggle = matchCombo(event, shortcuts.hud);
         if (isHudToggle) {
-          if (paletteOpenRef.current) {
-            event.preventDefault();
-            return;
-          }
+          if (paletteOpenRef.current && palette) palette.set({ open: false });
           event.preventDefault();
           event.stopPropagation();
           stopHoldScroll(false);
@@ -6402,9 +6404,9 @@
       }
       logEvent("info", "settings", "logs cleared");
     };
-    const row = (key, labelKey, descKey, control) => h(
+    const row = (key, labelKey, descKey, control, disabled = false) => h(
       "div",
-      { className: "pbx-setRow", key },
+      { className: "pbx-setRow" + (disabled ? " pbx-setRowOff" : ""), key, "data-setting": key },
       h("div", { className: "pbx-setRowText" }, h("div", { className: "pbx-setLabel" }, t(labelKey)), descKey ? h("div", { className: "pbx-setDesc" }, t(descKey)) : null),
       h("div", { className: "pbx-setControl" }, control)
     );
@@ -6433,7 +6435,7 @@
         recording === key ? t("settings.recording") : comboDisplay(config.shortcuts[key])
       )
     );
-    const toggleRow = (section, key, labelKey, descKey) => {
+    const toggleRow = (section, key, labelKey, descKey, disabled = false) => {
       const values = readSection(section);
       return row(
         section + "-" + key,
@@ -6446,14 +6448,16 @@
             role: "switch",
             "aria-checked": Boolean(values[key]),
             "aria-label": t(labelKey),
+            disabled,
             className: "pbx-switch" + (values[key] ? " on" : ""),
             onClick: () => update(section, { [key]: !values[key] })
           },
           h("span", { className: "pbx-switchThumb" })
-        )
+        ),
+        disabled
       );
     };
-    const selectRow = (section, key, labelKey, options) => {
+    const selectRow = (section, key, labelKey, options, disabled = false) => {
       const values = readSection(section);
       return row(
         section + "-" + key,
@@ -6463,14 +6467,16 @@
           "select",
           {
             className: "pbx-setSelect",
+            disabled,
             value: String(values[key]),
             onChange: (event) => update(section, { [key]: event.target.value })
           },
           options.map((option) => h("option", { key: option.value, value: option.value }, t(option.labelKey)))
-        )
+        ),
+        disabled
       );
     };
-    const numberRow = (section, key, labelKey, min, max, step) => {
+    const numberRow = (section, key, labelKey, min, max, step, disabled = false) => {
       const value = numberIn(section, key, min, max);
       return row(
         section + "-" + key,
@@ -6480,6 +6486,7 @@
           key: section + "-" + key + "-" + value,
           type: "number",
           className: "pbx-setInput",
+          disabled,
           defaultValue: value,
           min,
           max,
@@ -6504,10 +6511,11 @@
               target.blur();
             }
           }
-        })
+        }),
+        disabled
       );
     };
-    const rangeRow = (section, key, labelKey, min, max, step) => {
+    const rangeRow = (section, key, labelKey, min, max, step, disabled = false) => {
       const value = numberIn(section, key, min, max);
       return row(
         section + "-" + key,
@@ -6518,6 +6526,7 @@
           { className: "pbx-setRange" },
           h("input", {
             type: "range",
+            disabled,
             min,
             max,
             step,
@@ -6525,7 +6534,8 @@
             onChange: (event) => update(section, { [key]: Number(event.target.value) })
           }),
           h("span", { className: "pbx-setRangeValue" }, String(value))
-        )
+        ),
+        disabled
       );
     };
     const headerButtonRow = (id, labelKey) => {
@@ -6567,6 +6577,13 @@
         )
       );
     };
+    const sectionOn = (section) => readSection(section).enabled !== false;
+    const boardOn = () => sectionOn("board");
+    const hudOn = () => sectionOn("hud");
+    const paletteOn = () => sectionOn("palette");
+    const notifyOn = () => sectionOn("notify");
+    const logOn = () => sectionOn("log");
+    const hudRecentOn = () => hudOn() && readSection("hud").recentEnabled !== false;
     return h(
       "div",
       { className: "pbx-setPage" },
@@ -6623,33 +6640,33 @@
         { className: "pbx-setSection" },
         h("h3", { className: "pbx-setSectionTitle" }, t("settings.behavior")),
         toggleRow("palette", "enabled", "settings.paletteEnabled", "settings.paletteEnabledDesc"),
-        toggleRow("palette", "includeArchived", "settings.paletteArchived", "settings.paletteArchivedDesc"),
+        toggleRow("palette", "includeArchived", "settings.paletteArchived", "settings.paletteArchivedDesc", !paletteOn()),
         toggleRow("hints", "shortcuts", "settings.shortcutHints", "settings.shortcutHintsDesc"),
         toggleRow("hud", "enabled", "settings.hudEnabled", "settings.hudEnabledDesc"),
-        toggleRow("hud", "includeDone", "settings.hudDone", "settings.hudDoneDesc"),
-        toggleRow("hud", "recentEnabled", "settings.hudRecent", "settings.hudRecentDesc"),
-        numberRow("hud", "recentCount", "settings.hudRecentCount", 1, 20, 1),
-        numberRow("hud", "maxSessions", "settings.hudMaxSessions", 1, 20, 1),
-        toggleRow("hud", "recentExcludeAuto", "settings.hudRecentExcludeAuto", "settings.hudRecentExcludeAutoDesc"),
-        toggleRow("hud", "defaultCollapsed", "settings.hudCollapsed", "settings.hudCollapsedDesc"),
+        toggleRow("hud", "includeDone", "settings.hudDone", "settings.hudDoneDesc", !hudOn()),
+        toggleRow("hud", "recentEnabled", "settings.hudRecent", "settings.hudRecentDesc", !hudOn()),
+        numberRow("hud", "recentCount", "settings.hudRecentCount", 1, 20, 1, !hudRecentOn()),
+        numberRow("hud", "maxSessions", "settings.hudMaxSessions", 1, 20, 1, !hudOn()),
+        toggleRow("hud", "recentExcludeAuto", "settings.hudRecentExcludeAuto", "settings.hudRecentExcludeAutoDesc", !hudRecentOn()),
+        toggleRow("hud", "defaultCollapsed", "settings.hudCollapsed", "settings.hudCollapsedDesc", !hudOn()),
         selectRow("hud", "defaultPosition", "settings.hudPosition", [
           { value: "top-right", labelKey: "settings.pos.top" },
           { value: "bottom-right", labelKey: "settings.pos.bottom" },
           { value: "last", labelKey: "settings.pos.last" }
-        ]),
+        ], !hudOn()),
         toggleRow("board", "enabled", "settings.boardEnabled", "settings.boardEnabledDesc"),
-        numberRow("board", "wideThreshold", "settings.boardThreshold", 320, 1e3, 20),
+        numberRow("board", "wideThreshold", "settings.boardThreshold", 320, 1e3, 20, !boardOn()),
         selectRow("board", "defaultView", "settings.boardView", [
           { value: "sessions", labelKey: "view.sessions" },
           { value: "projects", labelKey: "view.projects" }
-        ]),
+        ], !boardOn()),
         h("div", { className: "pbx-setSubTitle" }, t("settings.projectColumns")),
-        PROJECT_COLUMNS.map((def) => toggleRow("projectColumns", def.key, def.labelKey)),
+        PROJECT_COLUMNS.map((def) => toggleRow("projectColumns", def.key, def.labelKey, void 0, !boardOn())),
         h("div", { className: "pbx-setHint" }, t("settings.projectColumnsHint")),
         toggleRow("notify", "enabled", "settings.notifyEnabled", "settings.notifyEnabledDesc"),
-        toggleRow("notify", "sound", "settings.notifySound", "settings.notifySoundDesc"),
+        toggleRow("notify", "sound", "settings.notifySound", "settings.notifySoundDesc", !notifyOn()),
         toggleRow("chat", "autoHistory", "settings.chatAutoHistory", "settings.chatAutoHistoryDesc"),
-        rangeRow("palette", "blur", "settings.blur", 6, 32, 1)
+        rangeRow("palette", "blur", "settings.blur", 6, 32, 1, !paletteOn())
       ),
       h(
         "section",
@@ -6691,8 +6708,8 @@
           { value: "warn", labelKey: "settings.logLevelWarn" },
           { value: "info", labelKey: "settings.logLevelInfo" },
           { value: "debug", labelKey: "settings.logLevelDebug" }
-        ]),
-        numberRow("log", "max", "settings.logMax", 20, 500, 10),
+        ], !logOn()),
+        numberRow("log", "max", "settings.logMax", 20, 500, 10, !logOn()),
         h("div", { className: "pbx-setHint" }, t("settings.logHint", { count: String(logEntries.length) })),
         h(
           "div",
@@ -6987,7 +7004,11 @@
     const sameState = (left, right) => {
       const a = left || { open: false, mode: null };
       const b = right || { open: false, mode: null };
-      return Boolean(a.open) === Boolean(b.open) && (!a.open || a.mode === b.mode);
+      if (Boolean(a.open) !== Boolean(b.open)) return false;
+      if (!a.open) return true;
+      if (a.mode !== b.mode) return false;
+      if (typeof a.width === "number" && typeof b.width === "number") return Math.abs(a.width - b.width) <= 24;
+      return true;
     };
     useEffect(() => {
       if (!currentId) return void 0;
@@ -7393,10 +7414,14 @@
       } catch (error) {
       }
     };
-    const boardViewStore = createUiStore({ seq: 0, view: "projects" });
-    const requestBoardView = (view) => {
-      const snap = boardViewStore.getSnapshot();
-      boardViewStore.set({ seq: snap.seq + 1, view });
+    const boardViewStores = {
+      main: createUiStore({ seq: 0, view: "projects" }),
+      right: createUiStore({ seq: 0, view: "projects" })
+    };
+    const requestBoardView = (view, surface = "right") => {
+      const store = boardViewStores[surface];
+      const snap = store.getSnapshot();
+      store.set({ seq: snap.seq + 1, view });
     };
     const boardStateNow = () => {
       try {
@@ -7515,7 +7540,7 @@
       }
     };
     const openBoard = () => {
-      requestBoardView("projects");
+      if (!boardOpenNow()) requestBoardView("projects", "right");
       try {
         const sidebarRight = ctx.sidebarRight;
         if (!sidebarRight) return;
@@ -7538,7 +7563,7 @@
       }
     };
     const openFullBoard = () => {
-      requestBoardView("projects");
+      requestBoardView("projects", "main");
       collapseRightBoard();
       try {
         ctx.layout.selectPanel("project-board");
@@ -7568,7 +7593,13 @@
         return { ok: false, error: { message: String(error && error.message || error) } };
       }
     };
-    const boardInject = () => ({ openSession, openBoard, openFullBoard, hooks: boardHooks(), viewRequestStore: boardViewStore });
+    const boardInject = (surface) => ({
+      openSession,
+      openBoard,
+      openFullBoard,
+      hooks: boardHooks(),
+      viewRequestStore: boardViewStores[surface]
+    });
     const sessionMenuStore = createUiStore({ sessionId: null, title: "", at: 0 });
     const requestSessionMenu = (sessionId, title) => {
       if (sessionId) sessionMenuStore.set({ sessionId, title: title || "", at: Date.now() });
@@ -7734,7 +7765,7 @@
     ctx.slots.inject(
       "main",
       () => ctx.slots.register(
-        { name: "main", key: "project-board", locale: NS, inject: () => Object.assign({}, boardInject(), { closePanel: closeBoardPanel }) },
+        { name: "main", key: "project-board", locale: NS, inject: () => Object.assign({}, boardInject("main"), { closePanel: closeBoardPanel }) },
         ProjectBoard
       )
     );
@@ -7756,7 +7787,7 @@
     ctx.slots.inject(
       "sidebar.right.pane.tab",
       () => ctx.slots.register(
-        { name: "sidebar.right.pane.tab", key: BOARD_ID, locale: NS, inject: boardInject },
+        { name: "sidebar.right.pane.tab", key: BOARD_ID, locale: NS, inject: () => boardInject("right") },
         ResponsiveBoard
       )
     );

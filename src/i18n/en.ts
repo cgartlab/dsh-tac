@@ -177,5 +177,5 @@ export const en: Dict = {
       'appearance.color': 'Color', 'appearance.icon': 'Icon', 'appearance.reset': 'Reset to default',
       'empty.title': 'No workspaces yet', 'empty.desc': 'Add a workspace and its sessions and projects appear here.',
       'loading': 'Loading workspaces…', 'session.untitled': 'Untitled session', 'workspace.default': 'Default workspace',
-      'time.now': 'now', 'time.min': '{n}min', 'time.hour': '{n}h', 'time.day': '{n}d'
+      'time.now': 'now', 'time.min': '{n}min', 'time.hour': '{n}h', 'time.day': '{n}d', 'time.year': '{n}y'
 };

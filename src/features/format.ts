@@ -48,7 +48,10 @@ export function relTime(updatedAt: number | undefined, t: Translate): string {
   if (minutes < 60) return t('time.min', { n: minutes });
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return t('time.hour', { n: hours });
-  return t('time.day', { n: Math.floor(hours / 24) });
+  const days = Math.floor(hours / 24);
+  /* Past a year, "1635 days" stops telling anyone anything useful. */
+  if (days < 365) return t('time.day', { n: days });
+  return t('time.year', { n: Math.floor(days / 365) });
 }
 
 /** Project attributes that can be shown as columns in the board's project table.

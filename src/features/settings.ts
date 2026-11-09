@@ -393,10 +393,10 @@ export function SettingsPage(props: SettingsPageProps): unknown {
     logEvent('info', 'settings', 'logs cleared');
   };
 
-  const row = (key: string, labelKey: string, descKey: string | null, control: unknown): unknown =>
+  const row = (key: string, labelKey: string, descKey: string | null, control: unknown, disabled = false): unknown =>
     h(
       'div',
-      { className: 'pbx-setRow', key: key },
+      { className: 'pbx-setRow' + (disabled ? ' pbx-setRowOff' : ''), key: key, 'data-setting': key },
       h('div', { className: 'pbx-setRowText' }, h('div', { className: 'pbx-setLabel' }, t(labelKey)), descKey ? h('div', { className: 'pbx-setDesc' }, t(descKey)) : null),
       h('div', { className: 'pbx-setControl' }, control)
     );
@@ -426,7 +426,7 @@ export function SettingsPage(props: SettingsPageProps): unknown {
         recording === key ? t('settings.recording') : comboDisplay(config.shortcuts[key])
       )
     );
-  const toggleRow = (section: SettingsSection, key: string, labelKey: string, descKey?: string): unknown => {
+  const toggleRow = (section: SettingsSection, key: string, labelKey: string, descKey?: string, disabled = false): unknown => {
     const values = readSection(section);
     return row(
       section + '-' + key,
@@ -439,14 +439,16 @@ export function SettingsPage(props: SettingsPageProps): unknown {
           role: 'switch',
           'aria-checked': Boolean(values[key]),
           'aria-label': t(labelKey),
+          disabled: disabled,
           className: 'pbx-switch' + (values[key] ? ' on' : ''),
           onClick: () => update(section, { [key]: !values[key] })
         },
         h('span', { className: 'pbx-switchThumb' })
-      )
+      ),
+      disabled
     );
   };
-  const selectRow = (section: SettingsSection, key: string, labelKey: string, options: SelectOption[]): unknown => {
+  const selectRow = (section: SettingsSection, key: string, labelKey: string, options: SelectOption[], disabled = false): unknown => {
     const values = readSection(section);
     return row(
       section + '-' + key,
@@ -456,14 +458,16 @@ export function SettingsPage(props: SettingsPageProps): unknown {
         'select',
         {
           className: 'pbx-setSelect',
+          disabled: disabled,
           value: String(values[key]),
           onChange: (event: Event) => update(section, { [key]: (event.target as HTMLSelectElement).value })
         },
         options.map((option) => h('option', { key: option.value, value: option.value }, t(option.labelKey)))
-      )
+      ),
+      disabled
     );
   };
-  const numberRow = (section: SettingsSection, key: string, labelKey: string, min: number, max: number, step: number): unknown => {
+  const numberRow = (section: SettingsSection, key: string, labelKey: string, min: number, max: number, step: number, disabled = false): unknown => {
     const value = numberIn(section, key, min, max);
     return row(
       section + '-' + key,
@@ -473,6 +477,7 @@ export function SettingsPage(props: SettingsPageProps): unknown {
         key: section + '-' + key + '-' + value,
         type: 'number',
         className: 'pbx-setInput',
+        disabled: disabled,
         defaultValue: value,
         min: min,
         max: max,
@@ -497,10 +502,11 @@ export function SettingsPage(props: SettingsPageProps): unknown {
             target.blur();
           }
         }
-      })
+      }),
+      disabled
     );
   };
-  const rangeRow = (section: SettingsSection, key: string, labelKey: string, min: number, max: number, step: number): unknown => {
+  const rangeRow = (section: SettingsSection, key: string, labelKey: string, min: number, max: number, step: number, disabled = false): unknown => {
     const value = numberIn(section, key, min, max);
     return row(
       section + '-' + key,
@@ -511,6 +517,7 @@ export function SettingsPage(props: SettingsPageProps): unknown {
         { className: 'pbx-setRange' },
         h('input', {
           type: 'range',
+          disabled: disabled,
           min: min,
           max: max,
           step: step,
@@ -518,7 +525,8 @@ export function SettingsPage(props: SettingsPageProps): unknown {
           onChange: (event: Event) => update(section, { [key]: Number((event.target as HTMLInputElement).value) })
         }),
         h('span', { className: 'pbx-setRangeValue' }, String(value))
-      )
+      ),
+      disabled
     );
   };
   const headerButtonRow = (id: string, labelKey: string): unknown => {
@@ -562,6 +570,17 @@ export function SettingsPage(props: SettingsPageProps): unknown {
       )
     );
   };
+
+  /* A feature that is switched off makes its own sub-settings meaningless — the reader can still
+     change them and nothing happens, which reads as a broken setting. Grey those out instead.
+     The switch itself is never disabled, or there would be no way back. */
+  const sectionOn = (section: SettingsSection): boolean => readSection(section).enabled !== false;
+  const boardOn = (): boolean => sectionOn('board');
+  const hudOn = (): boolean => sectionOn('hud');
+  const paletteOn = (): boolean => sectionOn('palette');
+  const notifyOn = (): boolean => sectionOn('notify');
+  const logOn = (): boolean => sectionOn('log');
+  const hudRecentOn = (): boolean => hudOn() && readSection('hud').recentEnabled !== false;
 
   return h(
     'div',
@@ -624,33 +643,33 @@ export function SettingsPage(props: SettingsPageProps): unknown {
       { className: 'pbx-setSection' },
       h('h3', { className: 'pbx-setSectionTitle' }, t('settings.behavior')),
       toggleRow('palette', 'enabled', 'settings.paletteEnabled', 'settings.paletteEnabledDesc'),
-      toggleRow('palette', 'includeArchived', 'settings.paletteArchived', 'settings.paletteArchivedDesc'),
+      toggleRow('palette', 'includeArchived', 'settings.paletteArchived', 'settings.paletteArchivedDesc', !paletteOn()),
       toggleRow('hints', 'shortcuts', 'settings.shortcutHints', 'settings.shortcutHintsDesc'),
       toggleRow('hud', 'enabled', 'settings.hudEnabled', 'settings.hudEnabledDesc'),
-      toggleRow('hud', 'includeDone', 'settings.hudDone', 'settings.hudDoneDesc'),
-      toggleRow('hud', 'recentEnabled', 'settings.hudRecent', 'settings.hudRecentDesc'),
-      numberRow('hud', 'recentCount', 'settings.hudRecentCount', 1, 20, 1),
-      numberRow('hud', 'maxSessions', 'settings.hudMaxSessions', 1, 20, 1),
-      toggleRow('hud', 'recentExcludeAuto', 'settings.hudRecentExcludeAuto', 'settings.hudRecentExcludeAutoDesc'),
-      toggleRow('hud', 'defaultCollapsed', 'settings.hudCollapsed', 'settings.hudCollapsedDesc'),
+      toggleRow('hud', 'includeDone', 'settings.hudDone', 'settings.hudDoneDesc', !hudOn()),
+      toggleRow('hud', 'recentEnabled', 'settings.hudRecent', 'settings.hudRecentDesc', !hudOn()),
+      numberRow('hud', 'recentCount', 'settings.hudRecentCount', 1, 20, 1, !hudRecentOn()),
+      numberRow('hud', 'maxSessions', 'settings.hudMaxSessions', 1, 20, 1, !hudOn()),
+      toggleRow('hud', 'recentExcludeAuto', 'settings.hudRecentExcludeAuto', 'settings.hudRecentExcludeAutoDesc', !hudRecentOn()),
+      toggleRow('hud', 'defaultCollapsed', 'settings.hudCollapsed', 'settings.hudCollapsedDesc', !hudOn()),
       selectRow('hud', 'defaultPosition', 'settings.hudPosition', [
         { value: 'top-right', labelKey: 'settings.pos.top' },
         { value: 'bottom-right', labelKey: 'settings.pos.bottom' },
         { value: 'last', labelKey: 'settings.pos.last' }
-      ]),
+      ], !hudOn()),
       toggleRow('board', 'enabled', 'settings.boardEnabled', 'settings.boardEnabledDesc'),
-      numberRow('board', 'wideThreshold', 'settings.boardThreshold', 320, 1000, 20),
+      numberRow('board', 'wideThreshold', 'settings.boardThreshold', 320, 1000, 20, !boardOn()),
       selectRow('board', 'defaultView', 'settings.boardView', [
         { value: 'sessions', labelKey: 'view.sessions' },
         { value: 'projects', labelKey: 'view.projects' }
-      ]),
+      ], !boardOn()),
       h('div', { className: 'pbx-setSubTitle' }, t('settings.projectColumns')),
-      PROJECT_COLUMNS.map((def) => toggleRow('projectColumns', def.key, def.labelKey)),
+      PROJECT_COLUMNS.map((def) => toggleRow('projectColumns', def.key, def.labelKey, undefined, !boardOn())),
       h('div', { className: 'pbx-setHint' }, t('settings.projectColumnsHint')),
       toggleRow('notify', 'enabled', 'settings.notifyEnabled', 'settings.notifyEnabledDesc'),
-      toggleRow('notify', 'sound', 'settings.notifySound', 'settings.notifySoundDesc'),
+      toggleRow('notify', 'sound', 'settings.notifySound', 'settings.notifySoundDesc', !notifyOn()),
       toggleRow('chat', 'autoHistory', 'settings.chatAutoHistory', 'settings.chatAutoHistoryDesc'),
-      rangeRow('palette', 'blur', 'settings.blur', 6, 32, 1)
+      rangeRow('palette', 'blur', 'settings.blur', 6, 32, 1, !paletteOn())
     ),
 
     h(
@@ -694,8 +713,8 @@ export function SettingsPage(props: SettingsPageProps): unknown {
         { value: 'warn', labelKey: 'settings.logLevelWarn' },
         { value: 'info', labelKey: 'settings.logLevelInfo' },
         { value: 'debug', labelKey: 'settings.logLevelDebug' }
-      ]),
-      numberRow('log', 'max', 'settings.logMax', 20, 500, 10),
+      ], !logOn()),
+      numberRow('log', 'max', 'settings.logMax', 20, 500, 10, !logOn()),
       h('div', { className: 'pbx-setHint' }, t('settings.logHint', { count: String(logEntries.length) })),
       h(
         'div',

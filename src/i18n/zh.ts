@@ -175,7 +175,7 @@ export const zh = {
       'appearance.color': '颜色', 'appearance.icon': '图标', 'appearance.reset': '恢复默认',
       'empty.title': '还没有工作区', 'empty.desc': '添加一个工作区后，这里会显示它的会话与项目。',
       'loading': '正在读取工作区…', 'session.untitled': '未命名会话', 'workspace.default': '默认工作区',
-      'time.now': '刚刚', 'time.min': '{n}分钟', 'time.hour': '{n}小时', 'time.day': '{n}天'
+      'time.now': '刚刚', 'time.min': '{n}分钟', 'time.hour': '{n}小时', 'time.day': '{n}天', 'time.year': '{n}年'
 };
 
 export type Dict = Record<keyof typeof zh, string>;

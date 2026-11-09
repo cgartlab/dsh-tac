@@ -70,9 +70,24 @@ only reads status and toggles native sidebar presentation.
 DSH's right sidebar stores its open/closed state per session. The board is meant to be a
 workspace-level tool, so `BoardSessionGuard` (a `shell.overlay` watcher) remembers the pane
 state before a switch and restores it after the new session's state lands. The remembered
-state includes the presentation — narrow, half width or fullscreen — not just visibility.
+state includes the presentation — narrow, half width or fullscreen — not just visibility, plus
+the measured width, because the size bucket alone cannot express "wider than half but not
+fullscreen". Only the host's real fullscreen flag counts as `full`; a pane merely dragged wide
+stays a sized pane. A restore puts the recorded width back, and the "already the same" check
+compares widths (within 24px) rather than only the bucket.
 An explicit board shortcut within a second of the switch marks intent, and the guard then
 leaves the pane alone.
+
+Every size key (`Alt+N` / `Alt+B` / `Alt+V`) is its own toggle: while the board shows at any
+size, any size key closes it; while it is closed, a size key opens it at that size. Changing
+size therefore means close-then-open, which keeps one key from meaning "close" in one
+presentation and "resize" in another.
+
+The right-pane tab and the `main` panel render the same board component, but they are two
+independent boards: each owns its own view-request store (`boardViewStores.main` /
+`boardViewStores.right`), so an open request aimed at the pane never moves the main panel's
+tabs. `openBoard` only resets to the project view when the board is actually closed — bringing
+an already-open board to the front keeps the tab the reader picked.
 
 ## Keyboard handling
 
@@ -84,11 +99,18 @@ each action (see `DEFAULT_SETTINGS.shortcuts`). It is registered on mount and ga
 - an open command palette.
 
 While the palette is open its own keys keep working (`Alt+K` closes it, `Alt+I` / `Alt+,` move
-the selection, `Enter` opens, `Esc` closes); the layout and dialog shortcuts — rename, session
-menu, board (`Alt+N` / `Alt+B` / `Alt+V`) and the left sidebar (`Alt+W`) — dismiss the palette
-first and then act once; every other combo (HUD, interject, hold-scroll, scroll-to-bottom, the
-session cycle) is consumed and ignored without touching its feature, so no macOS Option
-character leaks into the page. A host dialog (any `aria-modal` element that is not
+the selection, `Enter` opens, `Esc` closes). The remaining combos split into two classes:
+
+- **Window-level actions** — rename, session menu, board (`Alt+N` / `Alt+B` / `Alt+V`), the left
+  sidebar (`Alt+W`) and the HUD (`Alt+E`) — dismiss the palette first and then act once, so the
+  effect is visible rather than happening behind a modal.
+- **Conversation-level actions** — interject, hold-scroll, scroll-to-bottom and the session
+  cycle — are consumed and ignored without touching their feature. They act on the chat
+  underneath, which the reader cannot see through the modal, so doing them would interrupt
+  typing for an invisible result. Consuming (rather than letting the event through) is also what
+  stops the macOS Option character from leaking into the page.
+
+A host dialog (any `aria-modal` element that is not
 the palette) blocks every shortcut *without* consuming it, leaving the key to the dialog. The
 narrow-window sidebar drawer (`data-shortcut-modal="sidebar"`) is exempt from that block: DSH
 keeps its own toggle alive in that state, so `Alt+W` must be able to close the drawer it opens.

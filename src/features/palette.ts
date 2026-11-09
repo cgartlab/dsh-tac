@@ -439,10 +439,12 @@ export function Palette(props: PaletteProps): unknown {
       }
       const isHudToggle = matchCombo(event as KeyEventLike, shortcuts.hud);
       if (isHudToggle) {
-        if (paletteOpenRef.current) {
-          event.preventDefault();
-          return;
-        }
+        /* Window-level toggles (palette / board / left sidebar / HUD / rename / session menu)
+           all act and close the palette first, so the effect is visible instead of happening
+           behind a modal. Conversation-level actions (steer, hold-scroll, scroll-to-bottom,
+           session cycle) stand down instead — they act on the chat underneath, and doing that
+           from behind a search box interrupts typing for something the reader cannot see. */
+        if (paletteOpenRef.current && palette) palette.set({ open: false });
         event.preventDefault();
         event.stopPropagation();
         stopHoldScroll(false);

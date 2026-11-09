@@ -9,6 +9,7 @@ import { logConfigNow, logEvent, setLogConfigGetter, setLogSink } from './core/l
 import { mergeSettings, loadSettings, persistSettings } from './core/settings';
 import { createPresetSource, createScheduleSource, type ObservableSnapshot, type PresetSnapshot, type ScheduleSnapshot } from './core/schedule';
 import { createUiStore } from './core/store';
+import type { UiStore } from './types';
 import { PLUGIN_SECTION_ID, openSettingsTarget, pluginSettingEntries, readHostSections } from './core/settings-catalog';
 import type { SettingEntry, SettingsCatalogSnapshot } from './core/settings-catalog';
 import { bindingsOverlap, comboBindingOf, comboDisplay, IS_MAC } from './core/combos';
@@ -459,13 +460,18 @@ export function apply(ctx: HostContext): void {
       /* ignore */
     }
   };
-  /** External view request for the board: opening it via a shortcut lands on "projects"
-   *  even when the board component stays mounted with a previously chosen view. Uses a
-   *  reactive store so store.set() reliably triggers a re-render via the subscription. */
-  const boardViewStore = createUiStore<{ seq: number; view: 'projects' | 'sessions' }>({ seq: 0, view: 'projects' });
-  const requestBoardView = (view: 'projects' | 'sessions'): void => {
-    const snap = boardViewStore.getSnapshot();
-    boardViewStore.set({ seq: snap.seq + 1, view });
+  /** Which UI surface a board instance is rendered in. The right-pane tab and the main panel
+   *  are independent boards: they can be open at the same time, so a view request aimed at one
+   *  must not move the other's tabs. Each surface therefore owns its own request store. */
+  type BoardSurface = 'main' | 'right';
+  const boardViewStores: Record<BoardSurface, UiStore<{ seq: number; view: 'projects' | 'sessions' }>> = {
+    main: createUiStore<{ seq: number; view: 'projects' | 'sessions' }>({ seq: 0, view: 'projects' }),
+    right: createUiStore<{ seq: number; view: 'projects' | 'sessions' }>({ seq: 0, view: 'projects' })
+  };
+  const requestBoardView = (view: 'projects' | 'sessions', surface: BoardSurface = 'right'): void => {
+    const store = boardViewStores[surface];
+    const snap = store.getSnapshot();
+    store.set({ seq: snap.seq + 1, view });
   };
   /** Current board pane state: { open, mode: 'narrow' | 'half' | 'full' | null, width? }. */
   const boardStateNow = (): BoardState => {
@@ -617,7 +623,9 @@ export function apply(ctx: HostContext): void {
     }
   };
   const openBoard = (): void => {
-    requestBoardView('projects');
+    /* "Bring the board to the front" must not throw away the tab the reader picked: only a
+       board that is actually closed lands on the default project view. */
+    if (!boardOpenNow()) requestBoardView('projects', 'right');
     try {
       const sidebarRight = ctx.sidebarRight;
       if (!sidebarRight) return;
@@ -641,7 +649,7 @@ export function apply(ctx: HostContext): void {
     }
   };
   const openFullBoard = (): void => {
-    requestBoardView('projects');
+    requestBoardView('projects', 'main');
     collapseRightBoard();
     try {
       ctx.layout.selectPanel('project-board');
@@ -677,7 +685,13 @@ export function apply(ctx: HostContext): void {
       return { ok: false, error: { message: String((error && (error as Error).message) || error) } };
     }
   };
-  const boardInject = (): Record<string, unknown> => ({ openSession: openSession, openBoard: openBoard, openFullBoard: openFullBoard, hooks: boardHooks(), viewRequestStore: boardViewStore });
+  const boardInject = (surface: BoardSurface): Record<string, unknown> => ({
+    openSession: openSession,
+    openBoard: openBoard,
+    openFullBoard: openFullBoard,
+    hooks: boardHooks(),
+    viewRequestStore: boardViewStores[surface]
+  });
 
   const sessionMenuStore = createUiStore<{ sessionId: string | null; title: string; at: number }>({ sessionId: null, title: '', at: 0 });
   const requestSessionMenu = (sessionId: string, title: string): void => {
@@ -863,7 +877,7 @@ export function apply(ctx: HostContext): void {
 
   ctx.slots.inject('main', () =>
     ctx.slots.register(
-      { name: 'main', key: 'project-board', locale: NS, inject: (): Record<string, unknown> => Object.assign({}, boardInject(), { closePanel: closeBoardPanel }) },
+      { name: 'main', key: 'project-board', locale: NS, inject: (): Record<string, unknown> => Object.assign({}, boardInject('main'), { closePanel: closeBoardPanel }) },
       ProjectBoard as unknown as (props: never) => unknown
     )
   );
@@ -887,7 +901,7 @@ export function apply(ctx: HostContext): void {
 
   ctx.slots.inject('sidebar.right.pane.tab', () =>
     ctx.slots.register(
-      { name: 'sidebar.right.pane.tab', key: BOARD_ID, locale: NS, inject: boardInject },
+      { name: 'sidebar.right.pane.tab', key: BOARD_ID, locale: NS, inject: (): Record<string, unknown> => boardInject('right') },
       ResponsiveBoard as unknown as (props: never) => unknown
     )
   );
