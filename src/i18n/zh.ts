@@ -165,6 +165,7 @@ export const zh = {
       'settings.resetAppearanceHint': '清除后立即恢复默认颜色与图标。',
       'settings.boardDisabled': '项目看板已在设置中关闭',
       'preset.standard': '标准模式', 'preset.ptc': 'PTC 模式', 'preset.minimal': '极简模式', 'preset.cordis': '创造模式', 'preset.none': '未设置',
+      'count.row': '共 {n} 条',
       'count.rows': '共 {n} 条',
       'board.showMore': '显示更多（还有 {n} 条）',
       'empty.filtered': '没有符合条件的条目',

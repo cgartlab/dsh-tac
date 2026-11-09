@@ -348,13 +348,13 @@
   }
   function createScheduleSource(ctx) {
     const { source, publish } = observable({ status: "loading", activeSessionIds: NO_AUTO });
-    let disposed = false;
+    let disposed2 = false;
     let epoch = 0;
     const read = async () => {
       const current = ++epoch;
       try {
         const result = await ctx.remote.schedule.catalog();
-        if (disposed || current !== epoch) return;
+        if (disposed2 || current !== epoch) return;
         if (result && result.ok) {
           const active = /* @__PURE__ */ new Set();
           for (const record of result.value || []) {
@@ -365,7 +365,7 @@
           publish({ status: "error", activeSessionIds: source.getSnapshot().activeSessionIds });
         }
       } catch (error) {
-        if (!disposed && current === epoch) publish({ status: "error", activeSessionIds: source.getSnapshot().activeSessionIds });
+        if (!disposed2 && current === epoch) publish({ status: "error", activeSessionIds: source.getSnapshot().activeSessionIds });
       }
     };
     const disposers = [];
@@ -385,7 +385,7 @@
     return {
       source,
       dispose: () => {
-        disposed = true;
+        disposed2 = true;
         for (const dispose of disposers) {
           try {
             if (typeof dispose === "function") dispose();
@@ -397,13 +397,13 @@
   }
   function createPresetSource(ctx) {
     const { source, publish } = observable({ status: "loading", names: {} });
-    let disposed = false;
+    let disposed2 = false;
     let epoch = 0;
     const read = async () => {
       const current = ++epoch;
       try {
         const result = await ctx.remote.agentPresets.list();
-        if (disposed || current !== epoch) return;
+        if (disposed2 || current !== epoch) return;
         if (result && result.ok) {
           const names = {};
           for (const preset of result.value && result.value.presets || []) {
@@ -416,7 +416,7 @@
           publish({ status: "error", names: source.getSnapshot().names });
         }
       } catch (error) {
-        if (!disposed && current === epoch) publish({ status: "error", names: source.getSnapshot().names });
+        if (!disposed2 && current === epoch) publish({ status: "error", names: source.getSnapshot().names });
       }
     };
     const disposers = [];
@@ -430,7 +430,7 @@
     return {
       source,
       dispose: () => {
-        disposed = true;
+        disposed2 = true;
         for (const dispose of disposers) {
           try {
             if (typeof dispose === "function") dispose();
@@ -442,6 +442,34 @@
   }
   function fallbackHook() {
     return ((_selector) => null);
+  }
+
+  // src/core/lifecycle.ts
+  var disposed = false;
+  var timers = /* @__PURE__ */ new Set();
+  function setDisposed(value) {
+    disposed = value;
+    if (!value) return;
+    for (const id of timers) window.clearTimeout(id);
+    timers.clear();
+  }
+  function trackTimer(run, delay) {
+    if (disposed) return 0;
+    const id = window.setTimeout(() => {
+      timers.delete(id);
+      if (disposed) return;
+      try {
+        run();
+      } catch (error) {
+      }
+    }, delay);
+    timers.add(id);
+    return id;
+  }
+  function cancelTimer(id) {
+    if (!id) return;
+    window.clearTimeout(id);
+    timers.delete(id);
   }
 
   // src/core/store.ts
@@ -800,7 +828,7 @@
     const header = dock.querySelector('button[aria-controls][aria-expanded="false"]');
     if (!header || header.disabled) return false;
     header.click();
-    window.setTimeout(() => {
+    trackTimer(() => {
       const retry = earliestSteerButton();
       if (retry) retry.click();
     }, 90);
@@ -937,7 +965,7 @@
     target.classList.remove("pbx-user-jump-highlight");
     void target.offsetWidth;
     target.classList.add("pbx-user-jump-highlight");
-    window.setTimeout(() => target.classList.remove("pbx-user-jump-highlight"), 1200);
+    trackTimer(() => target.classList.remove("pbx-user-jump-highlight"), 1200);
   }
   function findLoadEarlierButton() {
     const candidates = document.querySelectorAll('button, [role="button"]');
@@ -2090,6 +2118,7 @@
     "preset.minimal": "Minimal mode",
     "preset.cordis": "Creator mode",
     "preset.none": "Not set",
+    "count.row": "{n} row",
     "count.rows": "{n} rows",
     "board.showMore": "Show more ({n} left)",
     "empty.filtered": "No matching rows",
@@ -2380,6 +2409,7 @@
     "preset.minimal": "极简模式",
     "preset.cordis": "创造模式",
     "preset.none": "未设置",
+    "count.row": "共 {n} 条",
     "count.rows": "共 {n} 条",
     "board.showMore": "显示更多（还有 {n} 条）",
     "empty.filtered": "没有符合条件的条目",
@@ -3292,7 +3322,7 @@
           { colSpan: 7, onClick: () => setCollapsed((prev) => Object.assign({}, prev, { [workspaceId]: !isCollapsed })) },
           h("span", { className: "pbx-groupChevron" + (isCollapsed ? "" : " open") }, h(Icon, { name: "chevron", size: 13 })),
           projectChip(workspaceId, label, "lg"),
-          h("span", { className: "pbx-groupCount" }, t("count.rows", { n: count }))
+          h("span", { className: "pbx-groupCount" }, t(count === 1 ? "count.row" : "count.rows", { n: count }))
         )
       );
     };
@@ -3659,7 +3689,7 @@
           ),
           h("tbody", null, renderSessionsBody())
         ),
-        h("div", { className: "pbx-dbFoot" }, t("count.rows", { n: filteredSessions.length }))
+        h("div", { className: "pbx-dbFoot" }, t(filteredSessions.length === 1 ? "count.row" : "count.rows", { n: filteredSessions.length }))
       );
     } else {
       body = h(
@@ -3679,7 +3709,7 @@
             filteredProjects.length === 0 ? h("tr", null, h("td", { colSpan: 1 + projectCols.length, className: "pbx-emptyCell" }, t("empty.filtered"))) : filteredProjects.map(renderProjectRow).flat()
           )
         ),
-        h("div", { className: "pbx-dbFoot" }, t("count.rows", { n: filteredProjects.length }))
+        h("div", { className: "pbx-dbFoot" }, t(filteredProjects.length === 1 ? "count.row" : "count.rows", { n: filteredProjects.length }))
       );
     }
     if (compact) {
@@ -7072,6 +7102,7 @@
     }
   };
   function apply(ctx) {
+    setDisposed(false);
     ctx.effect(() => ctx.locale.register(NS, { zh, en }), "project-board: dictionaries");
     ctx.effect(() => {
       const root = document.documentElement;
@@ -7245,23 +7276,8 @@
     };
     const logStore = createUiStore(loadJson(LOG_KEY, { entries: [] }));
     setLogConfigGetter(() => settingsStore.getSnapshot().log || DEFAULT_SETTINGS.log);
-    const pendingTimers = /* @__PURE__ */ new Set();
-    const later = (run, delay) => {
-      const id = window.setTimeout(() => {
-        pendingTimers.delete(id);
-        try {
-          run();
-        } catch (error) {
-        }
-      }, delay);
-      pendingTimers.add(id);
-      return id;
-    };
-    const cancelLater = (id) => {
-      if (!id) return;
-      window.clearTimeout(id);
-      pendingTimers.delete(id);
-    };
+    const later = (run, delay) => trackTimer(run, delay);
+    const cancelLater = (id) => cancelTimer(id);
     let logPersistTimer = 0;
     setLogSink((entry) => {
       try {
@@ -7282,8 +7298,7 @@
     });
     ctx.effect(
       () => () => {
-        for (const id of pendingTimers) window.clearTimeout(id);
-        pendingTimers.clear();
+        setDisposed(true);
         if (logPersistTimer) {
           window.clearTimeout(logPersistTimer);
           logPersistTimer = 0;
@@ -7423,6 +7438,23 @@
       const snap = store.getSnapshot();
       store.set({ seq: snap.seq + 1, view });
     };
+    ctx.effect(() => {
+      let wasOpen = boardOpenNow();
+      const timer = window.setInterval(() => {
+        let nowOpen = false;
+        try {
+          nowOpen = boardOpenNow();
+        } catch (error) {
+          nowOpen = wasOpen;
+        }
+        if (!wasOpen && nowOpen && !boardIntentRecent()) {
+          logEvent("info", "board", "opened-externally", {});
+          requestBoardView("projects", "right");
+        }
+        wasOpen = nowOpen;
+      }, 400);
+      return () => window.clearInterval(timer);
+    }, "project-board: external open view");
     const boardStateNow = () => {
       try {
         if (!boardOpenNow()) return { open: false, mode: null };
@@ -7435,6 +7467,7 @@
       }
     };
     const setBoardState = (state) => {
+      lastBoardIntentAt = Date.now();
       try {
         const want = state || { open: false, mode: null };
         const sidebarRight = ctx.sidebarRight;

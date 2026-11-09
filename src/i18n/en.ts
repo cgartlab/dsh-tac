@@ -167,6 +167,7 @@ export const en: Dict = {
       'settings.resetAppearanceHint': 'Restores default colors and icons immediately.',
       'settings.boardDisabled': 'Project Board is disabled in settings',
       'preset.standard': 'Standard mode', 'preset.ptc': 'PTC mode', 'preset.minimal': 'Minimal mode', 'preset.cordis': 'Creator mode', 'preset.none': 'Not set',
+      'count.row': '{n} row',
       'count.rows': '{n} rows',
       'board.showMore': 'Show more ({n} left)',
       'empty.filtered': 'No matching rows',

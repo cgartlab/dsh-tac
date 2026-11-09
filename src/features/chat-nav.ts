@@ -1,6 +1,7 @@
 /** Jumping between user instructions in the rendered conversation. */
 import { chatJumpState } from '../core/state';
 import { logEvent } from '../core/log';
+import { trackTimer } from '../core/lifecycle';
 import { findChatScroller, visibleChatFlow } from './chat-dom';
 
 /** Every rendered user-instruction bubble, in document order. */
@@ -31,7 +32,9 @@ export function highlightUserTarget(target: HTMLElement | null): void {
   target.classList.remove('pbx-user-jump-highlight');
   void target.offsetWidth;
   target.classList.add('pbx-user-jump-highlight');
-  window.setTimeout(() => target.classList.remove('pbx-user-jump-highlight'), 1200);
+  /* Clearing the highlight touches a host node; keep it inside the tracked timers so a
+     teardown does not leave the plugin mutating the host afterwards. */
+  trackTimer(() => target.classList.remove('pbx-user-jump-highlight'), 1200);
 }
 
 export function findLoadEarlierButton(): HTMLElement | null {

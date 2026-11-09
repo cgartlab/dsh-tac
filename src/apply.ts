@@ -8,6 +8,7 @@ import { loadJson, saveJson } from './core/json';
 import { logConfigNow, logEvent, setLogConfigGetter, setLogSink } from './core/log';
 import { mergeSettings, loadSettings, persistSettings } from './core/settings';
 import { createPresetSource, createScheduleSource, type ObservableSnapshot, type PresetSnapshot, type ScheduleSnapshot } from './core/schedule';
+import { cancelTimer, setDisposed, trackTimer } from './core/lifecycle';
 import { createUiStore } from './core/store';
 import type { UiStore } from './types';
 import { PLUGIN_SECTION_ID, openSettingsTarget, pluginSettingEntries, readHostSections } from './core/settings-catalog';
@@ -66,6 +67,9 @@ interface CatalogRow {
 }
 
 export function apply(ctx: HostContext): void {
+  /* This module is re-entered on a client-plugin hot reload; the previous instance may have
+     marked itself disposed. Arm the lifecycle tracker before anything can schedule work. */
+  setDisposed(false);
   ctx.effect(() => ctx.locale.register(NS, { zh: zh as unknown as Record<string, string>, en }), 'project-board: dictionaries');
   /* Electron injects data-platform only in the native window; mark it ourselves so
      fixed-position UI honours the macOS menu bar / window-control clearance in
@@ -259,31 +263,12 @@ export function apply(ctx: HostContext): void {
   };
   const logStore = createUiStore<{ entries: LogEntry[] }>(loadJson(LOG_KEY, { entries: [] as LogEntry[] }));
   setLogConfigGetter(() => settingsStore.getSnapshot().log || DEFAULT_SETTINGS.log);
-  /* Shortcut paths schedule follow-up work a frame or two later (resize after the host's
-     own transition, caret placement after a remount, the sidebar-toggle verification log).
-     Those timers outlive an unload: disabling or hot-reloading the plugin while one is
-     pending used to let it fire against the host afterwards — resizing the pane or leaving
-     fullscreen in a session that no longer has this plugin. Track them so one effect can
-     clear everything on teardown. */
-  const pendingTimers = new Set<number>();
-  const later = (run: () => void, delay: number): number => {
-    const id = window.setTimeout(() => {
-      pendingTimers.delete(id);
-      try {
-        run();
-      } catch (error) {
-        /* ignore */
-      }
-    }, delay);
-    pendingTimers.add(id);
-    return id;
-  };
+  /* Deferred follow-ups (resize after the host's own transition, caret placement after a
+     remount, the side-effect log) are tracked in core/lifecycle so a teardown drains every
+     one of them, including the ones scheduled from feature modules. */
+  const later = (run: () => void, delay: number): number => trackTimer(run, delay);
   /** Drop a scheduled follow-up: a newer one supersedes it. */
-  const cancelLater = (id: number): void => {
-    if (!id) return;
-    window.clearTimeout(id);
-    pendingTimers.delete(id);
-  };
+  const cancelLater = (id: number): void => cancelTimer(id);
   let logPersistTimer = 0;
   setLogSink((entry: LogEntry) => {
     try {
@@ -304,11 +289,10 @@ export function apply(ctx: HostContext): void {
       /* ignore */
     }
   });
-  /* Clear every deferred follow-up on teardown so an unload cannot act on the host. */
+  /* Drain every deferred follow-up on teardown, so an unload cannot act on the host. */
   ctx.effect(
     () => () => {
-      for (const id of pendingTimers) window.clearTimeout(id);
-      pendingTimers.clear();
+      setDisposed(true);
       if (logPersistTimer) {
         window.clearTimeout(logPersistTimer);
         logPersistTimer = 0;
@@ -473,6 +457,29 @@ export function apply(ctx: HostContext): void {
     const snap = store.getSnapshot();
     store.set({ seq: snap.seq + 1, view });
   };
+  /* The host's own chrome (its left menu, a host command) can open the board too, and those
+     paths never reach this plugin. Without a watcher the board then came up on whatever tab
+     was last selected, while every plugin entry point resets a closed board to the configured
+     default view — the same user action behaved differently depending on where it started.
+     Watch for "was closed, now open" and apply the same rule; anything this plugin did (open
+     shortcut, header button, or a guard restore after a session switch) marks intent first. */
+  ctx.effect(() => {
+    let wasOpen = boardOpenNow();
+    const timer = window.setInterval(() => {
+      let nowOpen = false;
+      try {
+        nowOpen = boardOpenNow();
+      } catch (error) {
+        nowOpen = wasOpen;
+      }
+      if (!wasOpen && nowOpen && !boardIntentRecent()) {
+        logEvent('info', 'board', 'opened-externally', {});
+        requestBoardView('projects', 'right');
+      }
+      wasOpen = nowOpen;
+    }, 400);
+    return () => window.clearInterval(timer);
+  }, 'project-board: external open view');
   /** Current board pane state: { open, mode: 'narrow' | 'half' | 'full' | null, width? }. */
   const boardStateNow = (): BoardState => {
     try {
@@ -492,6 +499,10 @@ export function apply(ctx: HostContext): void {
   };
   /** Restore an exact board pane state: open/closed plus narrow, half or full size. */
   const setBoardState = (state: BoardState): void => {
+    /* A guard restore reopens the pane on a session switch. That is not the reader asking for
+       the board, so it must not be mistaken for an external open (see the observer below) —
+       which would throw away the tab they were looking at. */
+    lastBoardIntentAt = Date.now();
     try {
       const want = state || { open: false, mode: null };
       const sidebarRight = ctx.sidebarRight;

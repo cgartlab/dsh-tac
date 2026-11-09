@@ -1,6 +1,7 @@
 /** Composer focus, caret placement, native "back to bottom" and steering queued messages. */
 import { findChatScroller, visibleChatFlow } from './chat-dom';
 import { isPaletteOpen } from '../core/dom';
+import { trackTimer } from '../core/lifecycle';
 import { logEvent } from '../core/log';
 
 const STEER_LABELS = ['插话发送', 'Steer queued message'];
@@ -46,7 +47,9 @@ export function interjectEarliestQueued(): boolean {
   const header = dock.querySelector('button[aria-controls][aria-expanded="false"]') as HTMLButtonElement | null;
   if (!header || header.disabled) return false;
   header.click();
-  window.setTimeout(() => {
+  /* The queue panel expands asynchronously; the retry must not fire after the plugin was
+     torn down, or it clicks a host button nothing is waiting for any more. */
+  trackTimer(() => {
     const retry = earliestSteerButton();
     if (retry) retry.click();
   }, 90);

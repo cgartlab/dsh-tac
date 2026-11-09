@@ -3965,3 +3965,30 @@ test('a switched-off feature greys out its own sub-settings', () => {
   // The switch itself must stay reachable or there is no way back.
   assert.notEqual(controlFor('board-enabled').props.disabled, true, 'the board switch itself stays enabled');
 });
+
+test('the host opening the board itself lands on the default view', async () => {
+  /* The host's own left menu opens the board without going through this plugin, so every
+     plugin entry point resetting a closed board to the default view used to be matched by
+     this path keeping whatever tab was last selected — one action, two outcomes. */
+  const harness = createHarness();
+  const state = connectBoardPane(harness);
+  const rightStore = harness.registrations.find((item) => item.spec.name === 'sidebar.right.pane.tab').spec.inject().viewRequestStore;
+
+  // The reader leaves the board on the session tab, then closes it.
+  harness.pressCombo('alt+KeyN');
+  rightStore.set({ seq: rightStore.getSnapshot().seq + 1, view: 'sessions' });
+  harness.pressCombo('alt+KeyN');
+  assert.equal(state.expanded, false, 'the board is closed');
+  assert.equal(rightStore.getSnapshot().view, 'sessions', 'the session tab is still the remembered one');
+
+  // Wait past the intent window: the next open must read as somebody else's doing.
+  await new Promise((resolve) => setTimeout(resolve, 950));
+
+  // The host opens the board from its own chrome.
+  state.kind = 'projectBoard';
+  harness.services.sidebarRight.toggleExpanded();
+  harness.runIntervals();
+
+  assert.equal(state.expanded, true, 'the host opened the board');
+  assert.equal(rightStore.getSnapshot().view, 'projects', 'an externally opened board lands on the default view');
+});

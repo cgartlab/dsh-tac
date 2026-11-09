@@ -664,7 +664,7 @@ export function ProjectBoard(props: ProjectBoardProps): unknown {
         { colSpan: 7, onClick: () => setCollapsed((prev) => Object.assign({}, prev, { [workspaceId]: !isCollapsed })) },
         h('span', { className: 'pbx-groupChevron' + (isCollapsed ? '' : ' open') }, h(Icon, { name: 'chevron', size: 13 })),
         projectChip(workspaceId, label, 'lg'),
-        h('span', { className: 'pbx-groupCount' }, t('count.rows', { n: count }))
+        h('span', { className: 'pbx-groupCount' }, t(count === 1 ? 'count.row' : 'count.rows', { n: count }))
       )
     );
   };
@@ -1057,7 +1057,7 @@ export function ProjectBoard(props: ProjectBoardProps): unknown {
         ),
         h('tbody', null, renderSessionsBody())
       ),
-      h('div', { className: 'pbx-dbFoot' }, t('count.rows', { n: filteredSessions.length }))
+      h('div', { className: 'pbx-dbFoot' }, t(filteredSessions.length === 1 ? 'count.row' : 'count.rows', { n: filteredSessions.length }))
     );
   } else {
     body = h(
@@ -1079,7 +1079,7 @@ export function ProjectBoard(props: ProjectBoardProps): unknown {
             : filteredProjects.map(renderProjectRow).flat()
         )
       ),
-      h('div', { className: 'pbx-dbFoot' }, t('count.rows', { n: filteredProjects.length }))
+      h('div', { className: 'pbx-dbFoot' }, t(filteredProjects.length === 1 ? 'count.row' : 'count.rows', { n: filteredProjects.length }))
     );
   }
 
