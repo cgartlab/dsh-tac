@@ -143,3 +143,24 @@
 2. **深色/浅色主题的对比度实测**。审查是静态分析 CSS 变量与透明度，没有在两种主题下逐个截图比对。
 3. **快捷键的真人按键验证**。Windows 前台锁 + Chromium 子窗口无地址化，键盘注入实测全部失败；快捷键只能靠单元测试（模拟 keydown 事件）与日志验证。
 4. **几百个会话的真实性能**。分批渲染（阈值 200）有测试断言，但没有在真实 profile 里构造 500 条会话测帧率。
+
+## 11. 发布与分发（K）
+
+这一维只在"准备对外分发"时过一遍。
+
+- [x] `package.json` 的 `exports` 与同类第三方 bundle 对齐（`.`、`./client`、`./cordis.patch.yml`、`./package.json`、`./locale/*.json`、`./icon`）
+- [x] `dsh.bundle.patch` 指向的文件确实在本包内，且被打进 tarball
+- [x] 安装命令实测可用：`dsh plugin --profile <名> add github:<owner>/<repo>` 能下载、安装并**自动注册进 `dsh.profile.bundles`**
+- [x] 文档写清了 `dsh` CLI 的位置（桌面版不在 PATH）与如何确认 profile 名
+- [x] 仓库挂了 `dsh-plugin` topic（市场扫描入口）
+- [x] 提交材料齐备：一行价值 / 分类 / 安装命令 / 兼容性 / 许可证 / 截图 / 权限说明
+- [ ] npm 发布（需要维护者账号与包名决策；不发布则只被网站收录，不进 DSH 内置 Plugin Hub）
+
+## 12. 字典反向检查（L）
+
+`npm run check` 只验证"用到的键都在字典里"，不验证反过来。每批改动后单独跑一次：
+
+- [x] 找出**定义了但没有任何源文件引用**的键（本轮清掉 18 个，两语言共 36 条）
+- [x] 动态拼接的键（如 `'settings.hb.' + id`）不算死键——先确认没有 `t(a + b)` 形式
+- [x] **注意检测方法本身**：带点号的正则会漏掉 `loading` / `subtitle` / `open` / `title` 这类无点号键，必须用 `t('key')` 精确匹配二次确认
+- [x] 清理后 `npm run check`（会报"unknown i18n key used as a literal"）与全部测试仍需通过
