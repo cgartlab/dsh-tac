@@ -1990,6 +1990,9 @@
     "menu.archiveHint": "Archiving hides the session from lists; its data is kept.",
     "menu.sessionLabel": "Current session",
     "menu.subtitle": "Choose what to do with this session",
+    "menu.stopTitle": "Stop turn",
+    "menu.stopHint": "Stop the running turn; queued messages are preserved.",
+    "menu.stopUnavailable": "This DSH client does not expose a stop API.",
     "menu.archiveTitle": "Archive session",
     "menu.archiveDesc": "Hides it from active and recent lists; the conversation is kept and can be restored later.",
     "menu.deleteTitle": "Delete session",
@@ -2032,6 +2035,8 @@
     "settings.notifySoundDesc": "Play a chime for in-app notifications",
     "settings.chatAutoHistory": "Load history on scroll",
     "settings.chatAutoHistoryDesc": 'When a conversation is scrolled to the top, load older messages automatically (same as clicking "Load earlier")',
+    "notif.failTitle": "Task failed",
+    "notif.failBodyReason": 'Session "{title}" failed this turn: {reason}',
     "notif.completeTitle": "Task complete",
     "notif.completeBody": 'Session "{title}" finished',
     "notif.questionTitle": "Waiting for your answer",
@@ -2281,6 +2286,9 @@
     "menu.archiveHint": "归档后会话从列表隐藏，数据保留。",
     "menu.sessionLabel": "当前会话",
     "menu.subtitle": "选择要对这个会话执行的操作",
+    "menu.stopTitle": "停止运行",
+    "menu.stopHint": "停止当前运行中的回合，排队的消息会保留。",
+    "menu.stopUnavailable": "当前 DSH 客户端未开放停止接口。",
     "menu.archiveTitle": "归档会话",
     "menu.archiveDesc": "从活跃与最近列表里隐藏；聊天记录完整保留，之后还能找回来。",
     "menu.deleteTitle": "删除会话",
@@ -2323,6 +2331,8 @@
     "settings.notifySoundDesc": "应用内通知播放提示音",
     "settings.chatAutoHistory": "滚动到顶自动加载历史",
     "settings.chatAutoHistoryDesc": "会话滚动到顶部时，自动加载更早的消息（等同点击「加载更早」）",
+    "notif.failTitle": "任务失败",
+    "notif.failBodyReason": "会话「{title}」本轮运行失败：{reason}",
     "notif.completeTitle": "任务完成",
     "notif.completeBody": "会话「{title}」已完成",
     "notif.questionTitle": "等待回答",
@@ -6005,7 +6015,7 @@
       setError("");
       setBusy(kind);
       try {
-        const result = kind === "archive" ? await (props.archiveSession ? props.archiveSession(sessionId) : null) : await (props.deleteSession ? props.deleteSession(sessionId) : null);
+        const result = kind === "archive" ? await (props.archiveSession ? props.archiveSession(sessionId) : null) : kind === "cancel" ? await (props.cancelSession ? props.cancelSession(sessionId) : null) : await (props.deleteSession ? props.deleteSession(sessionId) : null);
         const value = result;
         if (value && value.ok) {
           close();
@@ -6014,6 +6024,8 @@
         const code = value && value.error ? value.error.code : "";
         if (kind === "delete" && (code === "unsupported" || code === "unavailable")) {
           setError(t("menu.deleteUnavailable"));
+        } else if (kind === "cancel" && (code === "unsupported" || code === "unavailable")) {
+          setError(t("menu.stopUnavailable"));
         } else {
           setError(t("menu.failed", { message: value && value.error && value.error.message || code || "failed" }));
         }
@@ -6071,6 +6083,19 @@
             { className: "pbx-menuOptionBody" },
             h("span", { className: "pbx-menuOptionTitle" }, busy === "archive" ? t("menu.busy") : t("menu.archiveTitle")),
             h("span", { className: "pbx-menuOptionDesc" }, t("menu.archiveDesc"))
+          ),
+          h("span", { className: "pbx-menuOptionChev", "aria-hidden": "true" }, "›")
+        ),
+        /* Stopping is offered above deleting: it is the safe step when a turn is stuck. */
+        h(
+          "button",
+          { type: "button", className: "pbx-menuOption", disabled: Boolean(busy), onClick: () => void run("cancel") },
+          h("span", { className: "pbx-menuOptionIcon" }, h(Icon, { name: "alert", size: 15 })),
+          h(
+            "span",
+            { className: "pbx-menuOptionBody" },
+            h("span", { className: "pbx-menuOptionTitle" }, busy === "cancel" ? t("menu.busy") : t("menu.stopTitle")),
+            h("span", { className: "pbx-menuOptionDesc" }, t("menu.stopHint"))
           ),
           h("span", { className: "pbx-menuOptionChev", "aria-hidden": "true" }, "›")
         ),
@@ -6875,6 +6900,16 @@
       return false;
     }
   }
+  function sessionFailureReason(snapshot) {
+    if (!snapshot || typeof snapshot !== "object") return "";
+    const record = snapshot;
+    const lastAgentError = record.lastAgentError;
+    if (typeof lastAgentError === "string" && lastAgentError.trim()) return lastAgentError.trim().slice(0, 240);
+    const promptError = record.promptError;
+    const message = promptError && promptError.error ? promptError.error.message : void 0;
+    if (typeof message === "string" && message.trim()) return message.trim().slice(0, 240);
+    return "";
+  }
   function NotificationWatcher(props) {
     const { t } = props;
     const useSessions = typeof props.useSessions === "function" ? props.useSessions : fallbackHook();
@@ -6933,6 +6968,11 @@
           return;
         }
         if (prev.status && prev.status.running === true && cur.status && cur.status.running !== true && !curPending) {
+          const failure = typeof props.failureOf === "function" ? props.failureOf(sessionId) : "";
+          if (failure) {
+            send(sessionId, "error", t("notif.failTitle"), t("notif.failBodyReason", { title, reason: failure }), 14e3);
+            return;
+          }
           send(sessionId, "success", t("notif.completeTitle"), t("notif.completeBody", { title }), 9e3);
         }
       });
@@ -7684,6 +7724,38 @@
         return { ok: false, error: { message: String(error && error.message || error) } };
       }
     };
+    const sessionFailureOf = (sessionId) => {
+      try {
+        const sessions = optionalService(ctx, "sessions");
+        if (!sessions || typeof sessions.binding !== "function") return "";
+        const binding = sessions.binding(sessionId);
+        const session = binding && binding.session;
+        if (!session || typeof session.getSnapshot !== "function") return "";
+        return sessionFailureReason(session.getSnapshot());
+      } catch (error) {
+        return "";
+      }
+    };
+    const cancelSession = async (sessionId) => {
+      try {
+        const remote = ctx.remote;
+        const cancel = remote && remote.session && typeof remote.session.cancel === "function" ? remote.session.cancel : null;
+        if (!cancel) return { ok: false, error: { code: "unsupported", message: "stopping a turn is unavailable" } };
+        const result = await cancel.call(remote.session, { sessionId });
+        if (!result || result.ok !== false) return { ok: true };
+        const error = result.error;
+        return { ok: false, error: error || { code: "cancel-failed", message: "the host rejected the stop request" } };
+      } catch (error) {
+        const rpc = error?.rpcError;
+        return {
+          ok: false,
+          error: {
+            code: rpc && rpc.code ? rpc.code : "",
+            message: String(error && error.message || error)
+          }
+        };
+      }
+    };
     ctx.effect(() => {
       const timer = window.setTimeout(() => {
         try {
@@ -7886,6 +7958,7 @@
           inject: () => ({
             archiveSession,
             deleteSession,
+            cancelSession,
             deleteSupported: Boolean(sessionDeleteApi()),
             closeSessionMenu,
             hooks: { sessionMenu: sessionMenuStore }
@@ -7936,7 +8009,13 @@
           id: "project-board-notifier",
           order: 36,
           locale: NS,
-          inject: () => ({ notify: pushNotif, system: showSystemNotification, openSession, hooks: { settings: settingsStore } })
+          inject: () => ({
+            notify: pushNotif,
+            system: showSystemNotification,
+            openSession,
+            failureOf: sessionFailureOf,
+            hooks: { settings: settingsStore }
+          })
         },
         NotificationWatcher
       )

@@ -26,8 +26,10 @@ jobs:
         run: node scripts/check-bundle.cjs
       - name: i18n parity and bundle embedding
         run: node scripts/check-i18n.cjs
+      # The file list lives in package.json so a new test file cannot be silently skipped here:
+      # this step used to enumerate the files and so missed test/github.test.cjs.
       - name: Unit and regression tests
-        run: node --test test/load.test.cjs test/shortcuts.test.cjs
+        run: npm test
       - name: Syntax
         run: |
           node --check client.js

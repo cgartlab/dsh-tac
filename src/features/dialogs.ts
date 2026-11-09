@@ -188,6 +188,8 @@ export interface SessionMenuDialogProps {
   closeSessionMenu?: () => void;
   archiveSession?: (sessionId: string) => Promise<ActionResult | void> | ActionResult | void;
   deleteSession?: (sessionId: string) => Promise<ActionResult | void> | ActionResult | void;
+  /** Stop the running turn (`remote.session.cancel`); queued work survives. */
+  cancelSession?: (sessionId: string) => Promise<ActionResult | void> | ActionResult | void;
   deleteSupported?: boolean;
   t: Translate;
 }
@@ -240,7 +242,7 @@ function SessionMenuForm(props: SessionMenuFormProps): unknown {
     document.addEventListener('keydown', onKey, true);
     return () => document.removeEventListener('keydown', onKey, true);
   }, [busy]);
-  const run = async (kind: 'archive' | 'delete'): Promise<void> => {
+  const run = async (kind: 'archive' | 'delete' | 'cancel'): Promise<void> => {
     if (busy) return;
     if (kind === 'delete' && confirmDelete !== true) {
       setConfirmDelete(true);
@@ -249,9 +251,12 @@ function SessionMenuForm(props: SessionMenuFormProps): unknown {
     setError('');
     setBusy(kind);
     try {
-      const result = kind === 'archive'
-        ? await (props.archiveSession ? props.archiveSession(sessionId) : null)
-        : await (props.deleteSession ? props.deleteSession(sessionId) : null);
+      const result =
+        kind === 'archive'
+          ? await (props.archiveSession ? props.archiveSession(sessionId) : null)
+          : kind === 'cancel'
+            ? await (props.cancelSession ? props.cancelSession(sessionId) : null)
+            : await (props.deleteSession ? props.deleteSession(sessionId) : null);
       const value = result as ActionResult | null;
       if (value && value.ok) {
         close();
@@ -260,6 +265,8 @@ function SessionMenuForm(props: SessionMenuFormProps): unknown {
       const code = value && value.error ? value.error.code : '';
       if (kind === 'delete' && (code === 'unsupported' || code === 'unavailable')) {
         setError(t('menu.deleteUnavailable'));
+      } else if (kind === 'cancel' && (code === 'unsupported' || code === 'unavailable')) {
+        setError(t('menu.stopUnavailable'));
       } else {
         setError(t('menu.failed', { message: (value && value.error && value.error.message) || code || 'failed' }));
       }
@@ -317,6 +324,19 @@ function SessionMenuForm(props: SessionMenuFormProps): unknown {
           { className: 'pbx-menuOptionBody' },
           h('span', { className: 'pbx-menuOptionTitle' }, busy === 'archive' ? t('menu.busy') : t('menu.archiveTitle')),
           h('span', { className: 'pbx-menuOptionDesc' }, t('menu.archiveDesc'))
+        ),
+        h('span', { className: 'pbx-menuOptionChev', 'aria-hidden': 'true' }, '›')
+      ),
+      /* Stopping is offered above deleting: it is the safe step when a turn is stuck. */
+      h(
+        'button',
+        { type: 'button', className: 'pbx-menuOption', disabled: Boolean(busy), onClick: () => void run('cancel') },
+        h('span', { className: 'pbx-menuOptionIcon' }, h(Icon, { name: 'alert', size: 15 })),
+        h(
+          'span',
+          { className: 'pbx-menuOptionBody' },
+          h('span', { className: 'pbx-menuOptionTitle' }, busy === 'cancel' ? t('menu.busy') : t('menu.stopTitle')),
+          h('span', { className: 'pbx-menuOptionDesc' }, t('menu.stopHint'))
         ),
         h('span', { className: 'pbx-menuOptionChev', 'aria-hidden': 'true' }, '›')
       ),

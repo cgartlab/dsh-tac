@@ -157,6 +157,41 @@ export interface PendingOption {
   description?: string;
 }
 
+/**
+ * Human-readable text for an approval reason, which the host may supply as a plain string, a
+ * `{en, zh}` pair, or a message object. Rendering it with String() produced `[object Object]`
+ * in the notification body.
+ */
+export function approvalReasonText(value: unknown): string {
+  if (!value) return '';
+  if (typeof value === 'string') return value.trim();
+  if (typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    for (const key of ['message', 'text', 'label', 'reason', 'description', 'summary']) {
+      const candidate = record[key];
+      if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
+    }
+    /* Prefer the Chinese copy: this UI is Chinese-first, and the pair is all the host gives. */
+    for (const key of ['zh', 'en']) {
+      const candidate = record[key];
+      if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
+    }
+  }
+  return '';
+}
+
+/** Readable failure text from a resident session snapshot, or '' when it did not fail. */
+export function sessionFailureReason(snapshot: unknown): string {
+  if (!snapshot || typeof snapshot !== 'object') return '';
+  const record = snapshot as Record<string, unknown>;
+  const lastAgentError = record.lastAgentError;
+  if (typeof lastAgentError === 'string' && lastAgentError.trim()) return lastAgentError.trim().slice(0, 240);
+  const promptError = record.promptError as { error?: { message?: unknown } } | null;
+  const message = promptError && promptError.error ? promptError.error.message : undefined;
+  if (typeof message === 'string' && message.trim()) return message.trim().slice(0, 240);
+  return '';
+}
+
 export interface PendingQuestion {
   question?: string;
   options?: PendingOption[];
@@ -176,10 +211,10 @@ export interface PendingInteraction {
 export function formatPendingNotification(pending: PendingInteraction | null | undefined, title: string, t: Translate): string {
   if (!pending) return '';
   if (pending.kind === 'approval') {
-    const reason = pending.displayReason || pending.reason || '';
+    const reason = approvalReasonText(pending.displayReason) || approvalReasonText(pending.reason);
     return (
       t('notif.approvalBody', { title: title, tool: pending.toolName || '' }) +
-      (reason ? '\n' + String(reason) : '') +
+      (reason ? '\n' + reason : '') +
       '\n' +
       t('notif.approvalChoices')
     );
@@ -220,6 +255,8 @@ export interface NotificationWatcherProps {
   openSession?: (id: string) => void;
   notify?: (payload: NotifyPayload) => void;
   system?: (title: string, body: string, sessionId: string | undefined, onOpen: (() => void) | null) => boolean;
+  /** Readable failure text for a session that just stopped running; '' means it completed. */
+  failureOf?: (sessionId: string) => string;
   t: Translate;
 }
 
@@ -292,6 +329,13 @@ export function NotificationWatcher(props: NotificationWatcherProps): unknown {
         return;
       }
       if (prev.status && prev.status.running === true && cur.status && cur.status.running !== true && !curPending) {
+        /* The host clears unning before the turn-error row mounts, so a failed turn used to
+           be announced as a completion. Ask for the failure text; only a clean run is a success. */
+        const failure = typeof props.failureOf === 'function' ? props.failureOf(sessionId) : '';
+        if (failure) {
+          send(sessionId, 'error', t('notif.failTitle'), t('notif.failBodyReason', { title: title, reason: failure }), 14000);
+          return;
+        }
         send(sessionId, 'success', t('notif.completeTitle'), t('notif.completeBody', { title: title }), 9000);
       }
     });

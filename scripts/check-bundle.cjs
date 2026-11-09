@@ -60,6 +60,20 @@ if (pkg) {
 
 if (!checkFile('cordis.patch.yml')) fail('missing cordis.patch.yml');
 if (!checkFile('LICENSE')) fail('missing LICENSE');
+for (const readme of ['README.md', 'README.zh.md']) checkFile(readme);
+
+/* The changelog's newest heading has to describe the version that will ship. `[未发布]` is the
+   repository's intended batch-then-release flow, so it counts as valid while changes accumulate;
+   once a version heading is added it must match package.json or the release notes describe some
+   other build. */
+if (checkFile('CHANGELOG.md')) {
+  const changelog = fs.readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8');
+  const heading = /^##\s*\[([^\]]+)\]/m.exec(changelog);
+  if (!heading) fail('CHANGELOG.md: missing a "## [version]" heading');
+  else if (heading[1] !== '未发布' && pkg && pkg.version && heading[1] !== pkg.version) {
+    fail('CHANGELOG.md: newest entry ' + heading[1] + ' does not match package.json version ' + pkg.version);
+  }
+}
 
 // The package name is the plugin's identity in three places at once: package.json,
 // the client module id in src/constants.ts, and the loader entry inside cordis.patch.yml.

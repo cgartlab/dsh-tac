@@ -26,7 +26,7 @@
     "check": "tsc --noEmit && node scripts/check-bundle.cjs && node scripts/check-i18n.cjs",
     "check:bundle": "node scripts/check-bundle.cjs",
     "check:i18n": "node scripts/check-i18n.cjs",
-    "test": "node --test test/load.test.cjs test/shortcuts.test.cjs test/github.test.cjs"
+    "test": "node --test test/load.test.cjs test/shortcuts.test.cjs test/github.test.cjs test/notifications.test.cjs"
   },
   "peerDependencies": {
     "react": "^18.2.0"

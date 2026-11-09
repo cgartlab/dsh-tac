@@ -30,7 +30,7 @@ import { Palette } from './features/palette';
 import { FloatingStatus } from './features/hud';
 import { RenameDialog, SessionMenuDialog } from './features/dialogs';
 import { SettingsPage } from './features/settings';
-import { NotificationDock, NotificationWatcher, ToastStack, showSystemNotification } from './features/notifications';
+import { NotificationDock, NotificationWatcher, ToastStack, sessionFailureReason, showSystemNotification } from './features/notifications';
 import { BoardSessionGuard, type BoardState } from './features/guard';
 
 export const INJECT = ['slots', 'locale', 'uiWorkspace', 'remote', 'remote.session', 'remote.schedule', 'remote.agentPresets', 'sidebarRight', 'sidebarRightTabs', 'layout'];
@@ -756,6 +756,54 @@ export function apply(ctx: HostContext): void {
       return { ok: false, error: { message: String((error && (error as Error).message) || error) } };
     }
   };
+  /**
+   * Readable failure text for a session that just stopped running, or '' when it completed.
+   *
+   * The notifier announces a completion when `running` goes false, but the host clears that
+   * flag before the turn-error row mounts, so a failed turn used to be reported as a success.
+   * A resident session snapshot carries `lastAgentError` / `promptError`, which is the only
+   * reliable signal available to a client plugin. Anything unexpected reads as "no failure" so
+   * a missing service degrades to the old behaviour instead of silencing notifications.
+   */
+  const sessionFailureOf = (sessionId: string): string => {
+    try {
+      const sessions = optionalService<{
+        binding?: (id: string) => { session?: { getSnapshot?: () => unknown } } | undefined;
+      }>(ctx, 'sessions');
+      if (!sessions || typeof sessions.binding !== 'function') return '';
+      const binding = sessions.binding(sessionId);
+      const session = binding && binding.session;
+      if (!session || typeof session.getSnapshot !== 'function') return '';
+      return sessionFailureReason(session.getSnapshot());
+    } catch (error) {
+      return '';
+    }
+  };
+  /** Stop a running turn. Queued work is preserved by the host; only the active run ends. */
+  const cancelSession = async (
+    sessionId: string
+  ): Promise<{ ok?: boolean; error?: { code?: string; message?: string } }> => {
+    try {
+      const remote = ctx.remote as unknown as {
+        session?: { cancel?: (input: { sessionId: string }) => Promise<{ ok?: boolean; error?: { code?: string; message?: string } } | void> };
+      } | undefined;
+      const cancel = remote && remote.session && typeof remote.session.cancel === 'function' ? remote.session.cancel : null;
+      if (!cancel) return { ok: false, error: { code: 'unsupported', message: 'stopping a turn is unavailable' } };
+      const result = await cancel.call(remote!.session, { sessionId: sessionId });
+      if (!result || (result as { ok?: boolean }).ok !== false) return { ok: true };
+      const error = (result as { error?: { code?: string; message?: string } }).error;
+      return { ok: false, error: error || { code: 'cancel-failed', message: 'the host rejected the stop request' } };
+    } catch (error) {
+      const rpc = (error as { rpcError?: { code?: string } } | null)?.rpcError;
+      return {
+        ok: false,
+        error: {
+          code: rpc && rpc.code ? rpc.code : '',
+          message: String((error && (error as Error).message) || error)
+        }
+      };
+    }
+  };
 
   /* -------------------------------------------------------- diagnostics */
   ctx.effect(() => {
@@ -975,6 +1023,7 @@ export function apply(ctx: HostContext): void {
         inject: () => ({
           archiveSession: archiveSession,
           deleteSession: deleteSession,
+          cancelSession: cancelSession,
           deleteSupported: Boolean(sessionDeleteApi()),
           closeSessionMenu: closeSessionMenu,
           hooks: { sessionMenu: sessionMenuStore }
@@ -1021,7 +1070,13 @@ export function apply(ctx: HostContext): void {
         id: 'project-board-notifier',
         order: 36,
         locale: NS,
-        inject: () => ({ notify: pushNotif, system: showSystemNotification, openSession: openSession, hooks: { settings: settingsStore } })
+        inject: () => ({
+          notify: pushNotif,
+          system: showSystemNotification,
+          openSession: openSession,
+          failureOf: sessionFailureOf,
+          hooks: { settings: settingsStore }
+        })
       },
       NotificationWatcher as unknown as (props: never) => unknown
     )

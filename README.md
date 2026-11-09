@@ -57,7 +57,11 @@ reading, and desktop-class task notifications.
 - **Task notifications** — a session finishing a turn, waiting for an answer, or asking
   for permission raises an in-app card at the bottom-right of the conversation with a
   chime; when the app is in the background a system notification carries the full question
-  text and every option.
+  text and every option. A turn that **fails** is reported as a failure rather than a
+  completion, with the readable reason in the body; an approval reason supplied as an
+  `{en, zh}` object is rendered as text instead of `[object Object]`.
+- **Session actions** — the `⌥+D` dialog can archive, delete (where the host exposes it),
+  and **stop a running turn** (`remote.session.cancel`); queued messages survive a stop.
 - **Conflict-aware shortcuts** — recording a combination already used by this plugin or by
   a built-in DSH command is rejected inline, and saved conflicts are reported at startup.
 - **Logs & diagnostics** — optional local logs (error / warn / info / debug) with a bounded ring buffer, copy and clear actions in settings, startup checks for shortcut collisions with built-in commands, and captured window errors and rejected promises.
