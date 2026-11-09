@@ -38,6 +38,7 @@ export const en: Dict = {
       'hud.title': 'Active & recent', 'hud.running': 'running', 'hud.expand': 'Expand', 'hud.collapse': 'Collapse', 'hud.prev': 'Previous', 'hud.next': 'Next', 'hud.recent': 'Recent',
       'hud.groupSession': 'Session', 'hud.groupMessage': 'Instruction', 'hud.prevInstruction': 'Previous', 'hud.nextInstruction': 'Next', 'hud.toBottom': 'Bottom', 'hud.auto': 'Auto',
       'hud.archive': 'Archive session',
+      'hud.archiveUnavailable': 'This DSH client exposes no archive entry point; use the session actions dialog instead.',
       'palette.archived': 'Archived',
       'settings.paletteArchived': 'Include archived sessions in search',
       'settings.paletteArchivedDesc': 'On by default; turn it off to search only sessions that are not archived',

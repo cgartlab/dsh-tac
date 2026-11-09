@@ -1,4 +1,4 @@
-/*! dsh-tac 0.4.2 — generated from src/ by scripts/build.mjs; do not edit */
+/*! dsh-tac 0.4.3 — generated from src/ by scripts/build.mjs; do not edit */
 "use strict";
 (() => {
   // src/constants.ts
@@ -1936,6 +1936,7 @@
     "hud.toBottom": "Bottom",
     "hud.auto": "Auto",
     "hud.archive": "Archive session",
+    "hud.archiveUnavailable": "This DSH client exposes no archive entry point; use the session actions dialog instead.",
     "palette.archived": "Archived",
     "settings.paletteArchived": "Include archived sessions in search",
     "settings.paletteArchivedDesc": "On by default; turn it off to search only sessions that are not archived",
@@ -2214,6 +2215,7 @@
     "hud.toBottom": "到底部",
     "hud.auto": "自动化",
     "hud.archive": "归档会话",
+    "hud.archiveUnavailable": "当前 DSH 客户端没有提供归档接口，请在会话操作弹窗里归档。",
     "palette.archived": "已归档",
     "settings.paletteArchived": "搜索时包含已归档会话",
     "settings.paletteArchivedDesc": "默认包含；关掉后搜索列表只显示未归档会话",
@@ -5590,7 +5592,14 @@
     const runningCount = rows.filter((row) => row.tone === "running").length;
     const attentionCount = rows.filter((row) => row.tone === "attention").length;
     const archiveRow = async (row) => {
-      if (!row || typeof props.archiveSession !== "function") return;
+      if (!row) return;
+      if (typeof props.archiveSession !== "function") {
+        logEvent("warn", "hud", "archive-unsupported", { id: String(row.id || "").slice(-12) });
+        if (typeof props.notify === "function") {
+          props.notify({ tone: "warn", title: t("hud.title"), message: t("hud.archiveUnavailable"), ttl: 5e3 });
+        }
+        return;
+      }
       logEvent("info", "hud", "archive", { id: String(row.id || "").slice(-12) });
       let result = null;
       try {
@@ -6753,10 +6762,19 @@
   }
 
   // src/features/notifications.ts
+  var EMPTY_TOASTS = { items: [] };
+  function useStoreSnapshot(store, empty) {
+    const [snapshot, setSnapshot] = useState(() => store ? store.getSnapshot() : empty);
+    useEffect(() => {
+      if (!store) return void 0;
+      setSnapshot(store.getSnapshot());
+      return store.subscribe(() => setSnapshot(store.getSnapshot()));
+    }, [store]);
+    return store ? snapshot : empty;
+  }
   function ToastStack(props) {
     const { t, dismissToast } = props;
-    const useToasts = typeof props.useToasts === "function" ? props.useToasts : fallbackHook();
-    const snap = useToasts((value) => value);
+    const snap = useStoreSnapshot(props.toasts, EMPTY_TOASTS);
     const items = snap && snap.items || [];
     if (items.length === 0) return null;
     return h(
@@ -7979,7 +7997,7 @@
     ctx.slots.inject(
       "shell.overlay",
       () => ctx.slots.register(
-        { name: "shell.overlay", id: "project-board-toast", order: 45, locale: NS, inject: () => ({ dismissToast, hooks: { toasts: toastStore } }) },
+        { name: "shell.overlay", id: "project-board-toast", order: 45, locale: NS, inject: () => ({ dismissToast, toasts: toastStore }) },
         ToastStack
       )
     );

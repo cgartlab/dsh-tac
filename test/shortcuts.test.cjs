@@ -971,6 +971,18 @@ function createHarness(options) {
       hud.render();
       return hud;
     },
+    /* Same as mountHud, but with the caller's props layered on top of the shipped inject().
+       Needed to observe pass-through calls (for example the row archive button) that the real
+       service layer would otherwise absorb. */
+    mountHudWith(overrides) {
+      const entry = registrations.find((item) => item.spec.id === 'project-board-hud');
+      assert.ok(entry, 'the floating session list overlay is registered');
+      const hud = runtime.mount(entry.component, Object.assign({}, props, entry.spec.inject(), overrides || {}), (node) => {
+        doc.__setComponentRoot('hud', node);
+      });
+      hud.render();
+      return hud;
+    },
     runIntervals() {
       for (const timer of win.__intervals.slice()) if (!timer.cleared) timer.fn();
     },
@@ -4042,4 +4054,133 @@ test('a host without a stop API explains itself instead of failing silently', as
   assert.ok(error, 'an error line is shown instead of failing silently');
   /* The wording comes from menu.stopUnavailable; the bundle assertion in load.test.cjs proves
      both locales carry it. */
+});
+
+/* ------------------------------------------- floating-list row actions (archive) */
+
+/* mountHudWith() layers these props on top of the shipped inject() so the row button's call is observable. */
+
+
+test('the floating list archives the row whose button was clicked', async () => {
+  const harness = createHarness();
+  const archived = [];
+  const notices = [];
+  harness.mountHudWith({
+    archiveSession: (id) => { archived.push(id); return { ok: true }; },
+    notify: (payload) => notices.push(payload)
+  });
+
+  const buttons = harness.doc.querySelectorAll('.pbx-hudArchive');
+  assert.ok(buttons.length > 0, 'each row carries an archive control');
+  buttons[0].props.onClick({ stopPropagation() {} });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(archived.length, 1, 'the host archive API is called exactly once');
+  assert.ok(typeof archived[0] === 'string' && archived[0].length > 0, 'with a session id');
+  assert.equal(notices.length, 1, 'the outcome is surfaced to the user');
+  assert.equal(notices[0].tone, 'success', 'as a success');
+});
+
+test('the click does not fall through to switching sessions', async () => {
+  const harness = createHarness();
+  const opened = [];
+  harness.mountHudWith({
+    openSession: (id) => opened.push(id),
+    archiveSession: () => ({ ok: true })
+  });
+
+  const button = harness.doc.querySelectorAll('.pbx-hudArchive')[0];
+  let stopped = false;
+  button.props.onClick({ stopPropagation: () => { stopped = true; } });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(stopped, true, 'the row handler is stopped from also switching the session');
+  assert.deepEqual(opened, [], 'so archiving never opens the conversation');
+});
+
+test('a rejected archive reports the host reason instead of failing silently', async () => {
+  const harness = createHarness();
+  const notices = [];
+  harness.mountHudWith({
+    archiveSession: () => ({ ok: false, error: { message: 'session is still running' } }),
+    notify: (payload) => notices.push(payload)
+  });
+
+  harness.doc.querySelectorAll('.pbx-hudArchive')[0].props.onClick({ stopPropagation() {} });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(notices.length, 1, 'a failure is not silent');
+  assert.equal(notices[0].tone, 'warn', 'it is reported as a warning');
+  assert.ok(String(notices[0].message || '').indexOf('session is still running') >= 0, 'and carries the host reason');
+});
+
+test('a host without an archive API still tells the user', async () => {
+  const harness = createHarness();
+  const notices = [];
+  harness.mountHudWith({
+    archiveSession: undefined,
+    notify: (payload) => notices.push(payload)
+  });
+
+  const buttons = harness.doc.querySelectorAll('.pbx-hudArchive');
+  assert.ok(buttons.length > 0, 'the control renders even when the host cannot archive');
+  buttons[0].props.onClick({ stopPropagation() {} });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(notices.length, 1, 'the click is never swallowed without a word');
+});
+
+/* ------------------------------------------------------- toast rendering */
+
+/* Minimal external store, matching the plugin's createUiStore contract. */
+function makeStore(initial) {
+  let snapshot = initial;
+  const listeners = new Set();
+  return {
+    getSnapshot: () => snapshot,
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    set: (patch) => {
+      snapshot = Object.assign({}, snapshot, patch);
+      for (const listener of listeners) listener();
+    }
+  };
+}
+
+test('the toast stack renders what the plugin store holds', () => {
+  const harness = createHarness();
+  const entry = harness.registrations.find((item) => item.spec.id === 'project-board-toast');
+  assert.ok(entry, 'the toast overlay is registered');
+  const store = makeStore({ items: [{ id: 1, tone: 'success', title: 'Floating list', message: 'Archived' }] });
+  const instance = harness.runtime.mount(
+    entry.component,
+    Object.assign({}, entry.spec.inject(), { toasts: store, t: harness.ctx.locale.bind('projectBoard') }),
+    (node) => harness.doc.__setComponentRoot('toast', node)
+  );
+  instance.render();
+  const toast = harness.doc.querySelector('.pbx-toast');
+  assert.ok(toast, 'a toast renders from the store handed in by inject()');
+});
+
+test('the toast stack renders nothing when the store is empty', () => {
+  const harness = createHarness();
+  const entry = harness.registrations.find((item) => item.spec.id === 'project-board-toast');
+  const store = makeStore({ items: [] });
+  const instance = harness.runtime.mount(
+    entry.component,
+    Object.assign({}, entry.spec.inject(), { toasts: store, t: harness.ctx.locale.bind('projectBoard') }),
+    (node) => harness.doc.__setComponentRoot('toast', node)
+  );
+  instance.render();
+  assert.equal(harness.doc.querySelector('.pbx-toast'), null, 'no empty shell is rendered');
+});
+
+test('inject() hands the stack the real store instead of a dead hooks bag', () => {
+  const harness = createHarness();
+  const entry = harness.registrations.find((item) => item.spec.id === 'project-board-toast');
+  const injected = entry.spec.inject();
+  assert.ok(injected.toasts && typeof injected.toasts.getSnapshot === 'function', 'inject() passes the store itself');
+  assert.equal(typeof injected.toasts.subscribe, 'function', 'with a subscribe the component can use');
 });

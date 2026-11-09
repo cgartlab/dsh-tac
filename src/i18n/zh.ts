@@ -36,6 +36,7 @@ export const zh = {
       'hud.title': '活跃与最近会话', 'hud.running': '进行中', 'hud.expand': '展开', 'hud.collapse': '收起', 'hud.prev': '上一个', 'hud.next': '下一个', 'hud.recent': '最近',
       'hud.groupSession': '会话', 'hud.groupMessage': '指令', 'hud.prevInstruction': '上一条', 'hud.nextInstruction': '下一条', 'hud.toBottom': '到底部', 'hud.auto': '自动化',
       'hud.archive': '归档会话',
+      'hud.archiveUnavailable': '当前 DSH 客户端没有提供归档接口，请在会话操作弹窗里归档。',
       'palette.archived': '已归档',
       'settings.paletteArchived': '搜索时包含已归档会话',
       'settings.paletteArchivedDesc': '默认包含；关掉后搜索列表只显示未归档会话',

@@ -2,7 +2,7 @@
 import { DEFAULT_SETTINGS } from '../constants';
 import type { Translate, UseHook } from '../host';
 import { h, useEffect, useRef, useState } from '../runtime';
-import type { Settings } from '../types';
+import type { Settings, UiStore } from '../types';
 import { fallbackHook } from '../core/schedule';
 import { Icon } from '../ui/icons';
 import { findChatScroller } from './chat-dom';
@@ -21,15 +21,31 @@ export interface ToastSnapshot {
 }
 
 export interface ToastStackProps {
+  /** The plugin's own toast store. Slot `inject()` is a plain function and cannot hand over a
+   *  React hook, so passing the store and subscribing here is the only way the stack can ever see
+   *  a toast; before this the component fell back to an always-empty hook and nothing appeared. */
+  toasts?: UiStore<ToastSnapshot>;
   useToasts?: UseHook<ToastSnapshot>;
   dismissToast?: (id: number) => void;
   t: Translate;
 }
 
+const EMPTY_TOASTS: ToastSnapshot = { items: [] };
+
+/** Subscribe to an external store from inside a component. */
+function useStoreSnapshot<T extends object>(store: UiStore<T> | undefined, empty: T): T {
+  const [snapshot, setSnapshot] = useState<T>(() => (store ? store.getSnapshot() : empty));
+  useEffect(() => {
+    if (!store) return undefined;
+    setSnapshot(store.getSnapshot());
+    return store.subscribe(() => setSnapshot(store.getSnapshot()));
+  }, [store]);
+  return store ? snapshot : empty;
+}
+
 export function ToastStack(props: ToastStackProps): unknown {
   const { t, dismissToast } = props;
-  const useToasts = typeof props.useToasts === 'function' ? props.useToasts : fallbackHook<ToastSnapshot>();
-  const snap = useToasts((value) => value);
+  const snap = useStoreSnapshot(props.toasts, EMPTY_TOASTS);
   const items = (snap && snap.items) || [];
   if (items.length === 0) return null;
   return h(

@@ -872,7 +872,16 @@ export function FloatingStatus(props: FloatingStatusProps): unknown {
   const runningCount = rows.filter((row) => row.tone === 'running').length;
   const attentionCount = rows.filter((row) => row.tone === 'attention').length;
   const archiveRow = async (row: HudRow): Promise<void> => {
-    if (!row || typeof props.archiveSession !== 'function') return;
+    if (!row) return;
+    /* Never swallow the click: if the host did not hand us an archive entry point, say so instead
+       of leaving the row unchanged with no feedback (which reads as a broken button). */
+    if (typeof props.archiveSession !== 'function') {
+      logEvent('warn', 'hud', 'archive-unsupported', { id: String(row.id || '').slice(-12) });
+      if (typeof props.notify === 'function') {
+        props.notify({ tone: 'warn', title: t('hud.title'), message: t('hud.archiveUnavailable'), ttl: 5000 });
+      }
+      return;
+    }
     logEvent('info', 'hud', 'archive', { id: String(row.id || '').slice(-12) });
     let result: { ok?: boolean; error?: { message?: string } } | void = null as unknown as void;
     try {

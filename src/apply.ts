@@ -1080,7 +1080,7 @@ export function apply(ctx: HostContext): void {
   );
   ctx.slots.inject('shell.overlay', () =>
     ctx.slots.register(
-      { name: 'shell.overlay', id: 'project-board-toast', order: 45, locale: NS, inject: () => ({ dismissToast: dismissToast, hooks: { toasts: toastStore } }) },
+      { name: 'shell.overlay', id: 'project-board-toast', order: 45, locale: NS, inject: () => ({ dismissToast: dismissToast, toasts: toastStore }) },
       ToastStack as unknown as (props: never) => unknown
     )
   );
