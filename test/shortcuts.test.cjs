@@ -1,7 +1,7 @@
 'use strict';
 
 /*
- * Keyboard-shortcut verification for @local/dsh-tac.
+ * Keyboard-shortcut verification for dsh-tac.
  *
  * The plugin binds its global shortcuts inside the Palette component:
  *
@@ -3902,7 +3902,7 @@ test('closing the sidebar with Alt+W restores a docked pill', () => {
 });
 test('the right-pane board switches between compact and wide with its width', () => {
   const harness = createHarness();
-  const entry = harness.registrations.find((item) => item.spec.id === '@local/dsh-tac/tab' || item.spec.key === '@local/dsh-tac/tab');
+  const entry = harness.registrations.find((item) => item.spec.id === 'dsh-tac/tab' || item.spec.key === 'dsh-tac/tab');
   assert.ok(entry, 'the right-pane board tab is registered');
   const injected = entry.spec.inject();
   const props = Object.assign({}, injected, {

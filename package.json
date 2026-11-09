@@ -1,7 +1,6 @@
 {
-  "name": "@local/dsh-tac",
-  "version": "0.4.0",
-  "private": true,
+  "name": "dsh-tac",
+  "version": "0.4.1",
   "description": "DeepSeek Harness plugin: project/session task board, floating session HUD, keyboard-first navigation, and task notifications.",
   "license": "CC-BY-NC-SA-4.0",
   "author": "CGArtLab",

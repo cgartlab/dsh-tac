@@ -1,11 +1,11 @@
-/*! @local/dsh-tac 0.4.0 — generated from src/ by scripts/build.mjs; do not edit */
+/*! dsh-tac 0.4.1 — generated from src/ by scripts/build.mjs; do not edit */
 "use strict";
 (() => {
   // src/constants.ts
-  var MODULE_ID = "@local/dsh-tac";
+  var MODULE_ID = "dsh-tac";
   var NS = "projectBoard";
   var STORE_KEY = "dsh.project-board.appearance.v1";
-  var BOARD_ID = "@local/dsh-tac/tab";
+  var BOARD_ID = "dsh-tac/tab";
   var BOARD_KIND = "projectBoard";
   var SETTINGS_KEY = "dsh.project-board.settings.v1";
   var LOG_KEY = "pbx.logs.v1";

@@ -1,10 +1,10 @@
 /** Plugin identity, storage keys and the default settings every lookup falls back to. */
 import type { Settings, ShortcutAction } from './types';
 
-export const MODULE_ID = '@local/dsh-tac';
+export const MODULE_ID = 'dsh-tac';
 export const NS = 'projectBoard';
 export const STORE_KEY = 'dsh.project-board.appearance.v1';
-export const BOARD_ID = '@local/dsh-tac/tab';
+export const BOARD_ID = 'dsh-tac/tab';
 export const BOARD_KIND = 'projectBoard';
 export const SETTINGS_KEY = 'dsh.project-board.settings.v1';
 export const LOG_KEY = 'pbx.logs.v1';

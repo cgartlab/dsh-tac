@@ -1,4 +1,4 @@
 - insert:
     - id: dsh-tac
-      name: '@local/dsh-tac'
+      name: 'dsh-tac'
       config: {}

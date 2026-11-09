@@ -118,10 +118,16 @@ ls ~/.dsh/profiles/
 然后安装（把 `desktop` 换成上一步看到的那个名字）：
 
 ```bash
+dsh plugin --profile desktop add dsh-tac
+```
+
+它从 npm 装。想跟仓库 `main` 分支的最新提交时，改用源码形式：
+
+```bash
 dsh plugin --profile desktop add github:cgartlab/dsh-tac
 ```
 
-这条命令会把包下载下来，并**自动把它注册进该 profile 的 `dsh.profile.bundles`**（不需要手动改 json），最后**重启 DSH**。
+两种方式都会**自动把插件注册进该 profile 的 `dsh.profile.bundles`**（不需要手动改 json），最后**重启 DSH**。
 
 装好后你会立刻看到：
 
@@ -131,11 +137,11 @@ dsh plugin --profile desktop add github:cgartlab/dsh-tac
 
 **没出现怎么办**，按顺序查：
 
-1. `~/.dsh/profiles/<名字>/package.json` 的 `dsh.profile.bundles` 里有没有 `@local/dsh-tac`（`dsh plugin add` 通常会写进去；没有就手动加一项）；
+1. `~/.dsh/profiles/<名字>/package.json` 的 `dsh.profile.bundles` 里有没有 `dsh-tac`（`dsh plugin add` 通常会写进去；没有就手动加一项）；
 2. 「设置 → 插件」里它是不是被禁用了；
 3. 有没有**完全重启** DSH（关窗口不等于退出进程）。
 
-> 包名现在是 `@local/dsh-tac`：它是本地作用域，所以不同时跟 npm 上的同名包冲突。命令里统一用这个全名。
+> 包名现在是 `dsh-tac`：它是本地作用域，所以不同时跟 npm 上的同名包冲突。命令里统一用这个全名。
 
 ### 方式二：本机开发时链接源码
 
@@ -145,7 +151,7 @@ dsh plugin --profile desktop add github:cgartlab/dsh-tac
 plugin_manager install_bundle target="<本仓库路径>"
 ```
 
-包名为 `@local/dsh-tac`，以 `dsh-tac` 这个 loader 条目插入。`package.json` 暴露
+包名为 `dsh-tac`，以 `dsh-tac` 这个 loader 条目插入。`package.json` 暴露
 `dsh.bundle.patch` 与 `dsh.client`；插件注入 `conversation.header.leading`、
 `conversation.session.header.utilities`、`conversation.composer.dock`、`shell.overlay`
 和 `settings.section`。
@@ -165,7 +171,7 @@ npm run build      # src/ → client.js + index.js
 ### 卸载
 
 ```bash
-dsh plugin --profile desktop remove @local/dsh-tac
+dsh plugin --profile desktop remove dsh-tac
 ```
 
 或在「设置 → 插件」里禁用 `dsh-tac`。插件不写任何 DSH 数据；卸载后残留的只有它自己的设置与日志（存在浏览器 localStorage 里），可以随插件一起清掉。

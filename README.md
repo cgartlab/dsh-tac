@@ -140,11 +140,17 @@ this** — installing into the wrong profile leaves the plugin installed but com
 Install it (replace `desktop` with the name you just saw):
 
 ```bash
+dsh plugin --profile desktop add dsh-tac
+```
+
+That installs from npm. To track the latest commit on `main` instead, use the source form:
+
+```bash
 dsh plugin --profile desktop add github:cgartlab/dsh-tac
 ```
 
-This downloads the package **and registers it in that profile's `dsh.profile.bundles`**
-automatically — no hand-editing the JSON. Then **restart DSH**.
+Both **register the plugin in that profile's `dsh.profile.bundles`** automatically — no
+hand-editing the JSON. Then **restart DSH**.
 
 You should immediately see:
 
@@ -154,13 +160,13 @@ You should immediately see:
 
 **If nothing appears**, check in this order:
 
-1. whether `@local/dsh-tac` is in `dsh.profile.bundles` of
+1. whether `dsh-tac` is in `dsh.profile.bundles` of
    `~/.dsh/profiles/<name>/package.json` (`dsh plugin add` normally writes it; add the entry by
    hand if it is missing);
 2. whether it is disabled under **Settings → Plugins**;
 3. whether DSH was **fully restarted** (closing the window is not the same as quitting).
 
-> The package is named `@local/dsh-tac` — a local scope, so it never collides with an npm
+> The package is named `dsh-tac` — a local scope, so it never collides with an npm
 > package of the same name. Use that full name in commands.
 
 ### Option 2: link the source while developing
@@ -171,7 +177,7 @@ Use this when you want your local checkout, not the published one:
 plugin_manager install_bundle target="<this repository>"
 ```
 
-The package is `@local/dsh-tac` and inserts itself as the `dsh-tac` loader entry.
+The package is `dsh-tac` and inserts itself as the `dsh-tac` loader entry.
 `package.json` exposes `dsh.bundle.patch` and `dsh.client`; the plugin injects into
 `conversation.header.leading`, `conversation.session.header.utilities`,
 `conversation.composer.dock`, `shell.overlay`, and `settings.section`.
@@ -191,7 +197,7 @@ The built artifacts are committed; `npm run check` verifies they match the sourc
 ### Uninstall
 
 ```bash
-dsh plugin --profile desktop remove @local/dsh-tac
+dsh plugin --profile desktop remove dsh-tac
 ```
 
 Or disable `dsh-tac` under **Settings → Plugins**. The plugin writes no DSH data; what survives

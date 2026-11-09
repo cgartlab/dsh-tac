@@ -28,7 +28,7 @@ by `scripts/build.mjs` (esbuild) and must not be edited by hand.
 
 ```js
 window.__ModuleLoader__.load({
-  id: '@local/dsh-tac',
+  id: 'dsh-tac',
   factory(require) { /* ... */ }
 });
 ```
