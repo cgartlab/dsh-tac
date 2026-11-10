@@ -4,3 +4,9 @@
 *.gif binary
 *.webp binary
 *.ico binary
+
+# Build artifacts are committed so a profile can load the plugin without a toolchain, but they are
+# not source: mark them generated so GitHub folds them in diffs and leaves them out of the language
+# bar (otherwise this looks like a JavaScript project instead of a TypeScript one).
+client.js linguist-generated=true
+index.js linguist-generated=true
