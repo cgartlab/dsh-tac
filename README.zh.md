@@ -105,7 +105,9 @@ DSH 处于开发者预览期，插件用到的都是公开客户端服务，但�
 3. 在输入框里填 **`dsh-tac`**（也可以填 GitHub 地址或本地目录路径）；
 4. 点 **「安装」**，装完**重启 DSH**。
 
-装好之后这条会出现在「已安装插件」列表里，带一个开关。
+装好之后这条会出现在「已安装插件」列表里，带一个开关。安装器会自动把插件注册到你正在用的
+profile，不用手改任何配置文件。接着看下面的**「装完看什么」**和**「没出现怎么排查」**——
+这两节对两种安装方式都适用。
 
 ### 方式二：用命令行装
 
@@ -116,7 +118,17 @@ DSH 处于开发者预览期，插件用到的都是公开客户端服务，但�
 | Windows | `%LOCALAPPDATA%\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd` |
 | macOS | `/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh` |
 
-想省事就把它加进 PATH，之后直接用 `dsh`；不加就用完整路径。
+想省事就把它加进 PATH，之后直接用 `dsh`；不加就用完整路径。macOS 上不改 PATH 时，整条命令是：
+
+```bash
+"/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh" plugin --profile desktop add dsh-tac
+```
+
+Windows PowerShell 里把 `dsh` 换成完整的 `.cmd` 路径：
+
+```powershell
+& "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add dsh-tac
+```
 
 **再确认你的 profile 名。** 它就是你平时在用的那套配置，看这个目录里有什么：
 
@@ -124,7 +136,8 @@ DSH 处于开发者预览期，插件用到的都是公开客户端服务，但�
 ls ~/.dsh/profiles/
 ```
 
-桌面版通常是 `desktop`，`npx @deepseek-ai/dsh web` 起的是 `web`。**这一步别猜**——装错 profile 的话插件会装好但完全不出现。
+桌面版通常是 `desktop`，`npx @deepseek-ai/dsh web` 起的是 `web`，也可能有你自己建的其它 profile。
+要用 DSH 实际在跑的那一个。**这一步别猜**——装错 profile 的话插件会装好但完全不出现。
 
 然后安装（把 `desktop` 换成上一步看到的那个名字）：
 
@@ -132,25 +145,39 @@ ls ~/.dsh/profiles/
 dsh plugin --profile desktop add dsh-tac
 ```
 
-它从 npm 装。想跟仓库 `main` 分支的最新提交时，改用源码形式：
+它从 npm 装（`dsh plugin` 会把 `add <包名>` 原样转给该 profile 里的 pnpm）。想跟仓库 `main` 分支的最新提交时，改用源码形式：
 
 ```bash
 dsh plugin --profile desktop add github:cgartlab/dsh-tac
 ```
 
-两种方式都会**自动把插件注册进该 profile 的 `dsh.profile.bundles`**（不需要手动改 json），最后**重启 DSH**。
+上面两条命令都会**自动把插件注册进该 profile 的 `dsh.profile.bundles`**（不需要手动改 json），最后**重启 DSH**。
 
-装好后你会立刻看到：
+### 装完看什么
 
-- 左下角多了一块**悬浮会话列表**；
+两种安装方式的结果一样。**完全重启** DSH 后，你会立刻看到：
+
+- 左下角多了一块**悬浮会话列表**（[截图](docs/screenshots/hud.png)）；
 - 会话顶部多了**搜索框和几个按钮**；
-- 打开右侧面板（`Ctrl+Alt+B`）能看到**项目看板**。
+- 打开右侧面板，或按 `⌥+N` / `⌥+B` / `⌥+V`（Windows / Linux 为 `Alt+N` / `Alt+B` / `Alt+V`）
+  以窄 / 中 / 全屏尺寸打开**项目看板**（[看板截图](docs/screenshots/board.png)）；
+  按 `⌥+K`（Windows / Linux 为 `Alt+K`）打开[命令面板](docs/screenshots/palette.png)。
 
-**没出现怎么办**，按顺序查：
+### 没出现怎么排查
 
-1. `~/.dsh/profiles/<名字>/package.json` 的 `dsh.profile.bundles` 里有没有 `dsh-tac`（`dsh plugin add` 通常会写进去；没有就手动加一项）；
-2. 左侧栏 **「插件」** 页的「已安装插件」里它是不是被关掉了；
-3. 有没有**完全重启** DSH（关窗口不等于退出进程）。
+这一节对两种安装方式都适用，按顺序查：
+
+1. **profile 名装错，或没注册上。** 再跑一次 `ls ~/.dsh/profiles/`，确认 `--profile` 填的就是
+   DSH 实际在用的那个。`~/.dsh/profiles/<名字>/package.json` 的 `dsh.profile.bundles` 里应该有
+   `dsh-tac`（`dsh plugin add` 和界面安装都会自动写进去，只有确实缺了才手动补）。同目录的
+   `cordis.yml` 是 DSH 生成的，别手改。
+2. **插件被关了。** 左侧栏 **「插件」** 页的「已安装插件」里，确认 `dsh-tac` 的开关是开的。
+3. **没完全重启进程。** 关窗口不等于退出：macOS 用 `⌘+Q`，Windows 从托盘图标退出，再重新打开
+   DSH。客户端 bundle 只在启动时加载。
+4. **残留旧包名。** 插件历史上曾用 `@local/dsh-project-board` / `@local/dsh-tac` 发布过；很久以前
+   装过的话，检查 profile 里有没有残留旧条目——旧别名不会加载现在的 `dsh-tac` 包。
+5. 还不行就打开 **「⋯ 更多 → 设置 → 项目看板设置 → 日志与排查」**，把级别调到「常规信息（推荐）」，
+   重启后看有没有 `plugin ready` 记录。
 
 ### 插件的设置在哪儿
 
@@ -191,11 +218,12 @@ dsh plugin --profile desktop remove dsh-tac
 
 或在「设置 → 插件」里禁用 `dsh-tac`。插件不写任何 DSH 数据；卸载后残留的只有它自己的设置与日志（存在浏览器 localStorage 里），可以随插件一起清掉。
 
-### 它需要什么权限
+### 权限与数据
 
 - 读会话列表与状态、切换会话、重命名、归档——全部通过 DSH 公开的客户端服务，**不读会话内容**。
 - 可选：读 GitHub 公开 API 以显示 Open Issue / PR / 最新版本。**只在你自己在设置里填了仓库映射后才发请求**；填 token 才能读私有仓库，token 只存在本机。
 - 可选：系统通知（需要 DSH 或操作系统授予通知权限）。
+- 设置与日志只存在本机的浏览器 localStorage 里；不写任何 DSH 数据、不上传，运行时零依赖。
 
 ---
 
@@ -242,6 +270,20 @@ npm test               # bundle 加载测试 + 快捷键回归
 
 `client.js`、`index.js` 都是由 `src/` 生成的；CI 会重新构建，若提交的产物与源码不一致就失败。
 这些检查都会在每次推送和 PR 时由 CI 执行（`.github/workflows/check.yml`）。
+
+## 市场提交材料
+
+提交插件市场时需要的字段，以及每项在仓库里的位置：
+
+| 字段 | 内容 / 位置 |
+| --- | --- |
+| 一行价值 | 给 DeepSeek Harness 加上键盘优先的项目看板、悬浮会话列表与命令面板，一眼看全所有会话与项目。 |
+| 分类 | DSH 客户端插件 · 效率 / 项目管理（GitHub topic `dsh-plugin`，`package.json` 的 `keywords`）。 |
+| 安装命令 | `dsh plugin --profile <profile> add dsh-tac`，或在 DSH 界面点「+ 添加插件」；完整步骤见上方**「安装」**。 |
+| 兼容性 | 已在 DSH `0.2.2-rc.1` 验证（macOS / Windows 桌面版与 Web UI）；Node 18+ 仅用于仓库自检，见**「环境要求」**。 |
+| 许可证 | `CC-BY-NC-SA-4.0` —— `package.json` 的 `license`、页首徽章与下方**「协议」**。 |
+| 截图 | `docs/screenshots/board.png`、`hud.png`、`palette.png`，三张都已嵌在本页上方。 |
+| 权限与数据 | 见上方**「权限与数据」**：只读会话列表与状态，可选 GitHub API 与系统通知，不读会话内容、不上传。 |
 
 ## 协议
 
