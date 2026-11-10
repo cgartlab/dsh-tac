@@ -144,7 +144,8 @@ dsh plugin --profile desktop add github:cgartlab/dsh-tac
 
 - 左下角多了一块**悬浮会话列表**；
 - 会话顶部多了**搜索框和几个按钮**；
-- 打开右侧面板（`Ctrl+Alt+B`）能看到**项目看板**。
+- 打开右侧面板，或按 `⌥+N` / `⌥+B` / `⌥+V`（Windows / Linux 为 `Alt+N` / `Alt+B` / `Alt+V`）
+  以窄 / 中 / 全屏尺寸打开**项目看板**。
 
 **没出现怎么办**，按顺序查：
 

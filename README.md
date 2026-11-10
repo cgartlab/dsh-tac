@@ -167,7 +167,8 @@ You should immediately see:
 
 - a **floating session list** in the bottom-left;
 - a **search box and a few buttons** in the conversation header;
-- a **project board** when you open the right pane (`Ctrl+Alt+B`).
+- a **project board** when you open the right pane, or press `Alt+N` / `Alt+B` / `Alt+V`
+  (`⌥+N` / `⌥+B` / `⌥+V` on macOS) to open it at narrow / medium / fullscreen size.
 
 **If nothing appears**, check in this order:
 
