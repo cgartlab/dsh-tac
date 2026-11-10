@@ -225,6 +225,14 @@ export function Palette(props: PaletteProps): unknown {
     ...visibleSessions.map((row) => ({ kind: 'session' as const, row: row }))
   ];
 
+  const selectedItem = items[Math.min(index, Math.max(0, items.length - 1))];
+  const selectedArchived = Boolean(selectedItem && selectedItem.kind === 'session' && selectedItem.row.archived);
+  const footHint =
+    t('palette.hint', {
+      prev: comboDisplay(config.shortcuts.prev),
+      next: comboDisplay(config.shortcuts.next),
+      palette: comboDisplay(config.shortcuts.palette)
+    }) + (selectedArchived ? ' · ' + t('palette.unarchiveHint') : '');
   /* Restore one archived session in place, without leaving the palette. The row disappears only
      when the workspace snapshot drops its id, so the list keeps its shape while the host works. */
   const unarchive = async (row: PaletteRow): Promise<void> => {
@@ -628,7 +636,16 @@ export function Palette(props: PaletteProps): unknown {
       setIndex((value) => Math.max(0, value - 1));
     } else if (event.key === 'Enter') {
       event.preventDefault();
-      if (items.length > 0) choose(items[Math.min(index, items.length - 1)]);
+      if (items.length === 0) return;
+      const selected = items[Math.min(index, items.length - 1)];
+      /* Shift+Enter is the keyboard path to "restore from archive": the row itself opens the
+         session, and a mouse-only affordance would leave keyboard users without a way to
+         restore. On a session that is not archived it falls back to opening it. */
+      if (event.shiftKey && selected && selected.kind === 'session' && selected.row.archived) {
+        void unarchive(selected.row);
+        return;
+      }
+      choose(selected);
     } else if (event.key === 'Escape') {
       event.preventDefault();
       event.stopPropagation();
@@ -861,11 +878,7 @@ export function Palette(props: PaletteProps): unknown {
           ? h('div', { className: 'pbx-paletteEmpty' }, t('palette.empty'))
           : rendered
       ),
-      h('div', { className: 'pbx-paletteFoot' }, t('palette.hint', {
-        prev: comboDisplay(config.shortcuts.prev),
-        next: comboDisplay(config.shortcuts.next),
-        palette: comboDisplay(config.shortcuts.palette)
-      }))
+      h('div', { className: 'pbx-paletteFoot' }, footHint)
     )
   );
 }

@@ -4459,3 +4459,59 @@ test('the toast stack marks its tone so styling can differ', () => {
   assert.ok(toast, 'the toast is rendered');
   assert.equal(toast.getAttribute('data-tone'), 'success', 'the success tone reaches the markup');
 });
+test('Shift+Enter restores the highlighted archived session without opening it', async () => {
+  const harness = createHarness();
+  harness.setWorkspaces({
+    items: [{ workspaceId: 'w1', title: 'Workspace', sessionIds: ['s1', 's2', 's3'] }],
+    archivedSessionIds: ['s3']
+  });
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyK');
+  harness.doc.querySelectorAll('.pbx-pchip')[1].props.onClick({});
+  harness.render();
+
+  const input = harness.doc.querySelector('.pbx-paletteInput');
+  input.props.onKeyDown({ key: 'Enter', shiftKey: true, preventDefault() {}, stopPropagation() {}, currentTarget: input });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  harness.render();
+
+  assert.deepEqual(harness.spies.unarchive, ['s3'], 'the restore runs for the highlighted archived row');
+  assert.deepEqual(harness.services.calls.openSession, [], 'and the session is not opened instead');
+  assert.deepEqual(harness.spies.notify.map((item) => item.tone), ['success'], 'the outcome is announced');
+  assert.equal(harness.paletteOpen(), true, 'the palette stays open for further restores');
+});
+
+test('Shift+Enter on a normal session still opens it', () => {
+  const harness = createHarness();
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyK');
+
+  const input = harness.doc.querySelector('.pbx-paletteInput');
+  input.props.onKeyDown({ key: 'Enter', shiftKey: true, preventDefault() {}, stopPropagation() {}, currentTarget: input });
+  harness.render();
+  assert.deepEqual(harness.services.calls.openSession, ['s1'], 'a plain session opens as usual');
+  assert.deepEqual(harness.spies.unarchive, [], 'and nothing is restored');
+});
+
+test('the palette footer offers the restore hint only for an archived selection', () => {
+  const harness = createHarness();
+  harness.setWorkspaces({
+    items: [{ workspaceId: 'w1', title: 'Workspace', sessionIds: ['s1', 's2', 's3'] }],
+    archivedSessionIds: ['s3']
+  });
+  harness.resetState();
+  harness.pressCombo('alt+KeyK');
+
+  const foot = () => {
+    const node = harness.doc.querySelector('.pbx-paletteFoot');
+    return node ? node.children.map((child) => child.textContent || '').join('') : '';
+  };
+  assert.ok(foot().length > 0, 'the footer shows the keyboard hint');
+  assert.equal(foot().indexOf('Shift+Enter') < 0, true, 'no restore hint while a normal row is selected');
+
+  harness.doc.querySelectorAll('.pbx-pchip')[1].props.onClick({});
+  harness.render();
+  assert.ok(foot().indexOf('Shift+Enter') >= 0, 'the restore hint appears when the selection is archived');
+});

@@ -41,6 +41,7 @@ export const zh = {
       'palette.archivedOnly': '只看已归档',
       'palette.archivedOnlyHint': '只显示已归档的会话；再点一次回到全部',
       'palette.unarchive': '取消归档',
+  'palette.unarchiveHint': 'Shift+Enter 取消归档',
       'palette.unarchived': '已恢复这个会话',
       'palette.unarchiveFailed': '恢复失败',
       'palette.unarchiveUnavailable': '当前 DSH 客户端没有提供恢复归档接口。',

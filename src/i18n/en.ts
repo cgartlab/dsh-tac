@@ -43,6 +43,7 @@ export const en: Dict = {
       'palette.archivedOnly': 'Archived only',
       'palette.archivedOnlyHint': 'Show archived sessions only; click again for all',
       'palette.unarchive': 'Restore from archive',
+  'palette.unarchiveHint': 'Shift+Enter restores it',
       'palette.unarchived': 'Session restored',
       'palette.unarchiveFailed': 'Restore failed',
       'palette.unarchiveUnavailable': 'This DSH client exposes no unarchive entry point.',

@@ -55,9 +55,10 @@ reading, and desktop-class task notifications.
 - **Archived sessions on their own** — one chip ("Archived only", archive glyph) narrows the
   list to archived sessions and switches back on a second click. Each archived row carries a
   **restore** button that unarchives it in place, without leaving the search or opening another
-  screen. The filter is an explicit request, so it still shows archived rows even when
-  "include archived in search" is switched off. `Esc` clears the filters (project and archived
-  together) before a second press closes the panel.
+  screen; with the keyboard, `Shift+Enter` restores the highlighted archived row (the footer
+  hint appears only when the selection is archived). The filter is an explicit request, so it
+  still shows archived rows even when "include archived in search" is switched off. `Esc`
+  clears the filters (project and archived together) before a second press closes the panel.
 - **Hold-to-scroll reading** — the conversation scrolls smoothly while the key is held,
   loads older history automatically before reaching the boundary (when "history on scroll"
   is enabled), and falls back to anchor stepping if the chat view reverts a position write.
@@ -90,7 +91,7 @@ physical Option key. On Windows and Linux the same combinations are shown as `Al
 
 | Shortcut | Action |
 | --- | --- |
-| `⌥+K` | Open / close the command palette (sessions, projects and settings) — inside, `⌥+I` / `⌥+,` / `↑` / `↓` move the selection across all groups, `Enter` opens the session or jumps to the setting |
+| `⌥+K` | Open / close the command palette (sessions, projects and settings) — inside, `⌥+I` / `⌥+,` / `↑` / `↓` move the selection across all groups, `Enter` opens the session or jumps to the setting, `Shift+Enter` restores a highlighted archived row |
 | `⌥+I` / `⌥+,` | Previous / next session |
 | `⌥+U` / `⌥+M` | Previous / next user instruction (tap to jump, hold to scroll) |
 | `⌥+S` | Scroll to bottom and focus the composer |

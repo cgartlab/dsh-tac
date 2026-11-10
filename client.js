@@ -1953,6 +1953,7 @@
     "palette.archivedOnly": "Archived only",
     "palette.archivedOnlyHint": "Show archived sessions only; click again for all",
     "palette.unarchive": "Restore from archive",
+    "palette.unarchiveHint": "Shift+Enter restores it",
     "palette.unarchived": "Session restored",
     "palette.unarchiveFailed": "Restore failed",
     "palette.unarchiveUnavailable": "This DSH client exposes no unarchive entry point.",
@@ -2238,6 +2239,7 @@
     "palette.archivedOnly": "只看已归档",
     "palette.archivedOnlyHint": "只显示已归档的会话；再点一次回到全部",
     "palette.unarchive": "取消归档",
+    "palette.unarchiveHint": "Shift+Enter 取消归档",
     "palette.unarchived": "已恢复这个会话",
     "palette.unarchiveFailed": "恢复失败",
     "palette.unarchiveUnavailable": "当前 DSH 客户端没有提供恢复归档接口。",
@@ -4395,6 +4397,13 @@
       ...pluginSettings.map((entry) => ({ kind: "setting", entry })),
       ...visibleSessions.map((row) => ({ kind: "session", row }))
     ];
+    const selectedItem = items[Math.min(index, Math.max(0, items.length - 1))];
+    const selectedArchived = Boolean(selectedItem && selectedItem.kind === "session" && selectedItem.row.archived);
+    const footHint = t("palette.hint", {
+      prev: comboDisplay(config.shortcuts.prev),
+      next: comboDisplay(config.shortcuts.next),
+      palette: comboDisplay(config.shortcuts.palette)
+    }) + (selectedArchived ? " · " + t("palette.unarchiveHint") : "");
     const unarchive = async (row) => {
       const call = props.unarchiveSession;
       if (typeof call !== "function") {
@@ -4749,7 +4758,13 @@
         setIndex((value) => Math.max(0, value - 1));
       } else if (event.key === "Enter") {
         event.preventDefault();
-        if (items.length > 0) choose(items[Math.min(index, items.length - 1)]);
+        if (items.length === 0) return;
+        const selected = items[Math.min(index, items.length - 1)];
+        if (event.shiftKey && selected && selected.kind === "session" && selected.row.archived) {
+          void unarchive(selected.row);
+          return;
+        }
+        choose(selected);
       } else if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();
@@ -4975,11 +4990,7 @@
           { className: "pbx-paletteList", ref: listRef },
           items.length === 0 ? h("div", { className: "pbx-paletteEmpty" }, t("palette.empty")) : rendered
         ),
-        h("div", { className: "pbx-paletteFoot" }, t("palette.hint", {
-          prev: comboDisplay(config.shortcuts.prev),
-          next: comboDisplay(config.shortcuts.next),
-          palette: comboDisplay(config.shortcuts.palette)
-        }))
+        h("div", { className: "pbx-paletteFoot" }, footHint)
       )
     );
   }
