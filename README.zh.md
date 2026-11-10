@@ -271,6 +271,20 @@ npm test               # bundle 加载测试 + 快捷键回归
 `client.js`、`index.js` 都是由 `src/` 生成的；CI 会重新构建，若提交的产物与源码不一致就失败。
 这些检查都会在每次推送和 PR 时由 CI 执行（`.github/workflows/check.yml`）。
 
+## 市场提交材料
+
+提交插件市场时需要的字段，以及每项在仓库里的位置：
+
+| 字段 | 内容 / 位置 |
+| --- | --- |
+| 一行价值 | 给 DeepSeek Harness 加上键盘优先的项目看板、悬浮会话列表与命令面板，一眼看全所有会话与项目。 |
+| 分类 | DSH 客户端插件 · 效率 / 项目管理（GitHub topic `dsh-plugin`，`package.json` 的 `keywords`）。 |
+| 安装命令 | `dsh plugin --profile <profile> add dsh-tac`，或在 DSH 界面点「+ 添加插件」；完整步骤见上方**「安装」**。 |
+| 兼容性 | 已在 DSH `0.2.2-rc.1` 验证（macOS / Windows 桌面版与 Web UI）；Node 18+ 仅用于仓库自检，见**「环境要求」**。 |
+| 许可证 | `CC-BY-NC-SA-4.0` —— `package.json` 的 `license`、页首徽章与下方**「协议」**。 |
+| 截图 | `docs/screenshots/board.png`、`hud.png`、`palette.png`，三张都已嵌在本页上方。 |
+| 权限与数据 | 见上方**「权限与数据」**：只读会话列表与状态，可选 GitHub API 与系统通知，不读会话内容、不上传。 |
+
 ## 协议
 
 采用 [Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International](https://creativecommons.org/licenses/by-nc-sa/4.0/)，
