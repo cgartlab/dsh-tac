@@ -1738,7 +1738,11 @@
     'html[data-pbx-platform="darwin"] .pbx-renameBackdrop{padding-top:max(16vh,calc(var(--dsh-frame-top-clearance,48px) + 20px))}',
     ".pbx-toast{pointer-events:auto;display:flex;align-items:flex-start;gap:10px;min-width:260px;max-width:min(520px,calc(100vw - 32px));box-sizing:border-box;padding:10px 12px;background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-md);box-shadow:0 12px 32px rgba(0,0,0,.28);animation:pbxToastIn var(--pbx-dur-small) var(--pbx-ease-decelerate) both}",
     ".pbx-toast[data-tone=warn]{border-color:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 55%,var(--dsw-alias-border-l2))}",
+    ".pbx-toast[data-tone=success]{border-color:color-mix(in srgb,var(--dsw-alias-state-success-primary) 55%,var(--dsw-alias-border-l2))}",
+    ".pbx-toast[data-tone=error]{border-color:color-mix(in srgb,var(--dsw-alias-state-error-primary) 55%,var(--dsw-alias-border-l2))}",
     ".pbx-toastIcon{display:inline-flex;color:var(--dsw-alias-state-warn-primary);flex:none;padding-top:1px}",
+    ".pbx-toast[data-tone=success] .pbx-toastIcon{color:var(--dsw-alias-state-success-primary)}",
+    ".pbx-toast[data-tone=error] .pbx-toastIcon{color:var(--dsw-alias-state-error-primary)}",
     ".pbx-toastMain{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}",
     ".pbx-toastTitle{font-size:12.5px;font-weight:600;color:var(--dsw-alias-label-primary);line-height:1.4}",
     ".pbx-toastMsg{font-size:12px;color:var(--dsw-alias-label-secondary);line-height:1.45;overflow-wrap:anywhere}",
@@ -4303,6 +4307,7 @@
     const [index, setIndex] = useState(0);
     const [scope, setScope] = useState(null);
     const [archivedOnly, setArchivedOnly] = useState(false);
+    const unarchivingRef = useRef(/* @__PURE__ */ new Set());
     const [mounted, setMounted] = useState(false);
     const [closing, setClosing] = useState(false);
     const inputRef = useRef(null);
@@ -4394,21 +4399,24 @@
       const call = props.unarchiveSession;
       if (typeof call !== "function") {
         if (typeof props.notify === "function") {
-          props.notify({ tone: "warn", title: t("palette.archived"), message: t("palette.unarchiveUnavailable") });
+          props.notify({ tone: "warn", title: t("palette.unarchive"), message: t("palette.unarchiveUnavailable") });
         }
         return;
       }
+      if (unarchivingRef.current.has(row.id)) return;
+      unarchivingRef.current.add(row.id);
       let result = null;
       try {
         result = await call(row.id);
       } catch (error) {
         result = { ok: false, error: { message: String(error && error.message || error) } };
       }
+      unarchivingRef.current.delete(row.id);
       if (typeof props.notify !== "function") return;
       const ok = !result || result.ok !== false;
       const reason = result?.error?.message;
       props.notify(
-        ok ? { tone: "success", title: t("palette.archived"), message: t("palette.unarchived") } : { tone: "warn", title: t("palette.archived"), message: reason || t("palette.unarchiveFailed") }
+        ok ? { tone: "success", title: t("palette.unarchive"), message: t("palette.unarchived") } : { tone: "warn", title: t("palette.unarchive"), message: reason || t("palette.unarchiveFailed") }
       );
     };
     useEffect(() => {
@@ -4451,10 +4459,10 @@
       if (!listNode) return;
       const node = listNode.querySelectorAll(".pbx-prow")[index];
       if (node && typeof node.scrollIntoView === "function") node.scrollIntoView({ block: "nearest" });
-    }, [index, mounted, state.open, query, scope]);
+    }, [index, mounted, state.open, query, scope, archivedOnly]);
     useEffect(() => {
       setIndex(0);
-    }, [query, scope]);
+    }, [query, scope, archivedOnly]);
     useEffect(() => {
       const move = state.move;
       if (!state.open || !move || !move.at) return;
@@ -4467,6 +4475,7 @@
       if (state.open) {
         setQuery("");
         setScope(null);
+        setArchivedOnly(false);
         setIndex(0);
       }
     }, [state.open]);
@@ -4498,6 +4507,7 @@
         setMounted(false);
         setQuery("");
         setScope(null);
+        setArchivedOnly(false);
         setIndex(0);
       }, 180);
       return () => window.clearTimeout(timer);
@@ -4891,7 +4901,9 @@
             if (scope || archivedOnly) {
               setScope(null);
               setArchivedOnly(false);
-            } else close();
+            } else {
+              close();
+            }
           }
         },
         h(

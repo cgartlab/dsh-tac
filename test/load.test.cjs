@@ -469,3 +469,10 @@ test('the stop-turn and failure notifications are wired into the shipped bundle'
   assert.match(source, /remote\.session\.cancel|cancel\.call\(/, 'the stop action reaches the host');
   assert.match(source, /lastAgentError/, 'the notifier can read a failure reason from the snapshot');
 });
+test('the pill and toast styles keep their tone variants in the bundle', () => {
+  /* CSS is invisible to the DOM tests, so a dropped rule would only show up as a mis-coloured
+     toast in the app. Guard the two tone variants that carry user-visible meaning. */
+  assert.match(source, /\.pbx-toast\[data-tone=success\]/, 'success toasts have their own accent');
+  assert.match(source, /\.pbx-toast\[data-tone=success\] \.pbx-toastIcon/, 'and their own icon colour');
+  assert.match(source, /\.pbx-toast\[data-tone=warn\]/, 'warn toasts keep their accent');
+});

@@ -117,6 +117,8 @@ export function Palette(props: PaletteProps): unknown {
   /* Filter the list down to archived sessions only. Kept separate from `scope` because it is a
      different axis: a reader may want archived sessions of one project, or all of them. */
   const [archivedOnly, setArchivedOnly] = useState(false);
+  /** Sessions whose restore call is in flight, so a double click cannot fire it twice. */
+  const unarchivingRef = useRef(new Set<string>());
   const [mounted, setMounted] = useState(false);
   const [closing, setClosing] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -229,23 +231,30 @@ export function Palette(props: PaletteProps): unknown {
     const call = props.unarchiveSession;
     if (typeof call !== 'function') {
       if (typeof props.notify === 'function') {
-        props.notify({ tone: 'warn', title: t('palette.archived'), message: t('palette.unarchiveUnavailable') });
+        props.notify({ tone: 'warn', title: t('palette.unarchive'), message: t('palette.unarchiveUnavailable') });
       }
       return;
     }
+    /* Two clicks (or a double click) on the same row must not fire two restores: the second one
+       would hit an already-active session and surface a pointless error toast. */
+    if (unarchivingRef.current.has(row.id)) return;
+    unarchivingRef.current.add(row.id);
     let result: { ok?: boolean; error?: { message?: string } } | void = null as unknown as void;
     try {
       result = await call(row.id);
     } catch (error) {
       result = { ok: false, error: { message: String((error && (error as Error).message) || error) } };
     }
+    unarchivingRef.current.delete(row.id);
     if (typeof props.notify !== 'function') return;
     const ok = !result || (result as { ok?: boolean }).ok !== false;
     const reason = (result as { error?: { message?: string } })?.error?.message;
+    /* The toast title names the action that just ran; the old "Archived" title read as a
+       contradiction next to "Session restored". */
     props.notify(
       ok
-        ? { tone: 'success', title: t('palette.archived'), message: t('palette.unarchived') }
-        : { tone: 'warn', title: t('palette.archived'), message: reason || t('palette.unarchiveFailed') }
+        ? { tone: 'success', title: t('palette.unarchive'), message: t('palette.unarchived') }
+        : { tone: 'warn', title: t('palette.unarchive'), message: reason || t('palette.unarchiveFailed') }
     );
   };
 
@@ -296,10 +305,12 @@ export function Palette(props: PaletteProps): unknown {
     if (!listNode) return;
     const node = listNode.querySelectorAll('.pbx-prow')[index] as HTMLElement | undefined;
     if (node && typeof node.scrollIntoView === 'function') node.scrollIntoView({ block: 'nearest' });
-  }, [index, mounted, state.open, query, scope]);
+  }, [index, mounted, state.open, query, scope, archivedOnly]);
   useEffect(() => {
+    /* Any filter change narrows the list, so the highlight has to start over — the archived
+       toggle changes the row count just like the query and the project scope do. */
     setIndex(0);
-  }, [query, scope]);
+  }, [query, scope, archivedOnly]);
   useEffect(() => {
     const move = state.move;
     if (!state.open || !move || !move.at) return;
@@ -312,6 +323,7 @@ export function Palette(props: PaletteProps): unknown {
     if (state.open) {
       setQuery('');
       setScope(null);
+      setArchivedOnly(false);
       setIndex(0);
     }
   }, [state.open]);
@@ -344,6 +356,7 @@ export function Palette(props: PaletteProps): unknown {
       setMounted(false);
       setQuery('');
       setScope(null);
+      setArchivedOnly(false);
       setIndex(0);
     }, 180);
     return () => window.clearTimeout(timer);
@@ -770,9 +783,11 @@ export function Palette(props: PaletteProps): unknown {
           if (event.key !== 'Escape') return;
           event.preventDefault();
           if (scope || archivedOnly) {
-          setScope(null);
-          setArchivedOnly(false);
-        } else close();
+            setScope(null);
+            setArchivedOnly(false);
+          } else {
+            close();
+          }
         }
       },
       h(

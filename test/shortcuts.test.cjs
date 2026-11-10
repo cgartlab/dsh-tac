@@ -860,6 +860,8 @@ function createHarness(options) {
   /* A private copy of the shared session fixture: mutating the module-level object used to
      leak "no current session" into every later test in this file. */
   let sessionFixture = JSON.parse(JSON.stringify(SESSION_FIXTURE));
+  /** Test-provided restore implementation (default: always succeeds). */
+  let unarchiveImpl = null;
 
   const props = Object.assign({}, injected, {
     t: ctx.locale.bind('projectBoard'),
@@ -874,7 +876,10 @@ function createHarness(options) {
     toggleHud: () => { spies.toggleHud.push(true); return injected.toggleHud(); },
     requestRename: (id, title) => { spies.requestRename.push([id, title]); return injected.requestRename(id, title); },
     requestSessionMenu: (id, title) => { spies.requestSessionMenu.push([id, title]); return injected.requestSessionMenu(id, title); },
-    unarchiveSession: (id) => { spies.unarchive.push(id); return { ok: true }; },
+    unarchiveSession: (id) => {
+      spies.unarchive.push(id);
+      return unarchiveImpl ? unarchiveImpl(id) : { ok: true };
+    },
     notify: (payload) => { spies.notify.push(payload); return injected.notify(payload); }
   });
 
@@ -952,6 +957,10 @@ function createHarness(options) {
     render,
     setWorkspaces(next) {
       wsFixture = next;
+    },
+    /** Replace what the host's restore call returns (success, failure or a throw). */
+    setUnarchive(fn) {
+      unarchiveImpl = fn;
     },
     /** Mutate a private copy of the session fixture, then re-render. */
     patchSessions(mutate) {
@@ -4248,4 +4257,205 @@ test('restoring from an archived row does not open the session', async () => {
   assert.deepEqual(harness.spies.unarchive, ['s2'], 'the host restore API is called with that session');
   assert.deepEqual(harness.spies.notify.map((item) => item.tone), ['success'], 'the outcome is surfaced');
   assert.equal(harness.paletteOpen(), true, 'the palette stays open for further restores');
+});
+test('reopening the palette starts without the archived filter', () => {
+  const harness = createHarness();
+  harness.setWorkspaces({
+    items: [{ workspaceId: 'w1', title: 'Workspace', sessionIds: ['s1', 's2', 's3'] }],
+    archivedSessionIds: ['s3']
+  });
+  harness.resetState();
+  harness.pressCombo('alt+KeyK');
+
+  const archivedChip = () => harness.doc.querySelector('.pbx-pchip.archived');
+  assert.ok(archivedChip(), 'the archived filter chip is rendered');
+  assert.equal(harness.doc.querySelectorAll('.pbx-prow').length, 3, 'all sessions are listed by default');
+
+  archivedChip().props.onClick({});
+  harness.render();
+  assert.ok(/ on/.test(archivedChip().className), 'the archived filter is on');
+  assert.equal(harness.doc.querySelectorAll('.pbx-prow').length, 1, 'only the archived session is listed');
+
+  // Closing and reopening must start clean, exactly like the query and the project scope do.
+  harness.pressCombo('alt+KeyK');
+  assert.equal(harness.paletteOpen(), false, 'the palette is closed');
+  harness.pressCombo('alt+KeyK');
+  assert.equal(harness.paletteOpen(), true, 'and reopened');
+  assert.equal(/ on/.test(archivedChip().className), false, 'the archived filter is off after reopening');
+  assert.equal(harness.doc.querySelectorAll('.pbx-prow').length, 3, 'every session is listed again');
+});
+
+test('toggling the archived filter keeps the highlight on a real row', () => {
+  const harness = createHarness();
+  harness.setWorkspaces({
+    items: [{ workspaceId: 'w1', title: 'Workspace', sessionIds: ['s1', 's2', 's3'] }],
+    archivedSessionIds: ['s3']
+  });
+  harness.resetState();
+  harness.pressCombo('alt+KeyK');
+
+  function key(name) {
+    const input = harness.doc.querySelector('.pbx-paletteInput');
+    input.props.onKeyDown({ key: name, preventDefault() {}, stopPropagation() {}, currentTarget: input });
+    harness.render();
+  }
+  key('ArrowDown');
+  key('ArrowDown');
+  assert.equal(harness.doc.querySelectorAll('.pbx-prow.active').length, 1, 'the third row is highlighted');
+
+  // The filter shrinks the list to a single row; the highlight has to land on it.
+  harness.doc.querySelector('.pbx-pchip.archived').props.onClick({});
+  harness.render();
+  assert.equal(harness.doc.querySelectorAll('.pbx-prow').length, 1, 'the archived filter narrowed the list');
+  assert.equal(harness.doc.querySelectorAll('.pbx-prow.active').length, 1, 'a real row is still highlighted');
+
+  const input = harness.doc.querySelector('.pbx-paletteInput');
+  input.props.onKeyDown({ key: 'Enter', preventDefault() {}, stopPropagation() {}, currentTarget: input });
+  harness.render();
+  assert.deepEqual(harness.services.calls.openSession, ['s3'], 'Enter opens the only row that is left');
+});
+test('a failed restore keeps the row and reports the host reason', async () => {
+  const harness = createHarness();
+  harness.setWorkspaces({
+    items: [{ workspaceId: 'w1', title: 'Workspace', sessionIds: ['s1', 's2', 's3'] }],
+    archivedSessionIds: ['s2']
+  });
+  harness.setUnarchive(() => ({ ok: false, error: { message: 'session is not archived' } }));
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyK');
+  harness.doc.querySelectorAll('.pbx-pchip')[1].props.onClick({});
+  harness.render();
+
+  harness.doc.querySelector('.pbx-prowUnarchive').props.onClick({ stopPropagation() {}, preventDefault() {} });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepEqual(harness.spies.unarchive, ['s2'], 'the host was asked once');
+  assert.deepEqual(harness.spies.notify.map((item) => item.tone), ['warn'], 'the failure is surfaced as a warning');
+  assert.equal(harness.spies.notify[0].message, 'session is not archived', 'and carries the host reason');
+  assert.ok(harness.doc.querySelector('.pbx-prowUnarchive'), 'the row stays so the reader can retry');
+  assert.equal(harness.paletteOpen(), true, 'the palette stays open');
+});
+
+test('a restore that throws is reported instead of escaping as an error', async () => {
+  const harness = createHarness();
+  harness.setWorkspaces({
+    items: [{ workspaceId: 'w1', title: 'Workspace', sessionIds: ['s1', 's2'] }],
+    archivedSessionIds: ['s2']
+  });
+  harness.setUnarchive(() => { throw new Error('rpc exploded'); });
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyK');
+  harness.doc.querySelectorAll('.pbx-pchip')[1].props.onClick({});
+  harness.render();
+
+  await new Promise((resolve) => setImmediate(resolve));
+  harness.doc.querySelector('.pbx-prowUnarchive').props.onClick({ stopPropagation() {}, preventDefault() {} });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepEqual(harness.spies.notify.map((item) => item.tone), ['warn'], 'a thrown restore becomes a warning');
+  assert.equal(harness.spies.notify[0].message, 'rpc exploded', 'with the thrown message');
+});
+
+test('clicking restore twice only asks the host once', async () => {
+  const harness = createHarness();
+  harness.setWorkspaces({
+    items: [{ workspaceId: 'w1', title: 'Workspace', sessionIds: ['s1', 's2'] }],
+    archivedSessionIds: ['s2']
+  });
+  let resolveCall = null;
+  harness.setUnarchive(() => new Promise((resolve) => { resolveCall = resolve; }));
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyK');
+  harness.doc.querySelectorAll('.pbx-pchip')[1].props.onClick({});
+  harness.render();
+
+  const restore = harness.doc.querySelector('.pbx-prowUnarchive');
+  restore.props.onClick({ stopPropagation() {}, preventDefault() {} });
+  restore.props.onClick({ stopPropagation() {}, preventDefault() {} });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(harness.spies.unarchive, ['s2'], 'the second click is ignored while the first is in flight');
+  if (resolveCall) resolveCall({ ok: true });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+});
+
+test('Escape unwinds the archived filter before closing the palette', () => {
+  const harness = createHarness();
+  harness.setWorkspaces({
+    items: [{ workspaceId: 'w1', title: 'Workspace', sessionIds: ['s1', 's2', 's3'] }],
+    archivedSessionIds: ['s3']
+  });
+  harness.resetState();
+  harness.pressCombo('alt+KeyK');
+  harness.doc.querySelectorAll('.pbx-pchip')[1].props.onClick({});
+  harness.render();
+  assert.ok(/ on/.test(harness.doc.querySelector('.pbx-pchip.archived').className), 'the archived filter is on');
+
+  function escape() {
+    const input = harness.doc.querySelector('.pbx-paletteInput');
+    input.props.onKeyDown({ key: 'Escape', preventDefault() {}, stopPropagation() {}, currentTarget: input });
+    harness.render();
+  }
+  escape();
+  assert.equal(harness.paletteOpen(), true, 'the first Escape only clears the filter');
+  assert.equal(/ on/.test(harness.doc.querySelector('.pbx-pchip.archived').className), false, 'the archived filter is off');
+  escape();
+  assert.equal(harness.paletteOpen(), false, 'the second Escape closes the palette');
+});
+test('moving the highlight after a filter change stays inside the list', () => {
+  const harness = createHarness();
+  harness.resetState();
+  harness.pressCombo('alt+KeyK');
+
+  harness.pressCombo('alt+Comma'); // Alt+, moves the palette highlight
+  harness.render();
+  assert.equal(harness.doc.querySelectorAll('.pbx-prow.active').length, 1, 'the second row is highlighted');
+
+  // Narrow the list to one row, then move the highlight again.
+  const input = harness.doc.querySelector('.pbx-paletteInput');
+  input.props.onChange({ target: { value: 'Gamma' } });
+  harness.render();
+  assert.equal(harness.doc.querySelectorAll('.pbx-prow').length, 1, 'the query narrowed the list');
+
+  harness.pressCombo('alt+Comma');
+  harness.render();
+  assert.equal(harness.doc.querySelectorAll('.pbx-prow.active').length, 1, 'the highlight is still on the only row');
+});
+test('a successful restore is announced as an action, not as "archived"', async () => {
+  const harness = createHarness();
+  harness.setWorkspaces({
+    items: [{ workspaceId: 'w1', title: 'Workspace', sessionIds: ['s1', 's2'] }],
+    archivedSessionIds: ['s2']
+  });
+  harness.resetState();
+  harness.clearSpies();
+  harness.pressCombo('alt+KeyK');
+  harness.doc.querySelectorAll('.pbx-pchip')[1].props.onClick({});
+  harness.render();
+  harness.doc.querySelector('.pbx-prowUnarchive').props.onClick({ stopPropagation() {}, preventDefault() {} });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const t = harness.ctx.locale.bind('projectBoard');
+  assert.equal(harness.spies.notify[0].tone, 'success', 'the restore is a success notification');
+  assert.equal(harness.spies.notify[0].title, t('palette.unarchive'), 'the title names the action that ran');
+  assert.equal(harness.spies.notify[0].message, t('palette.unarchived'), 'and the message the outcome');
+});
+
+test('the toast stack marks its tone so styling can differ', () => {
+  const harness = createHarness();
+  const entry = harness.registrations.find((item) => item.spec.id === 'project-board-toast');
+  assert.ok(entry, 'the toast stack is registered');
+  const injected = entry.spec.inject();
+  const props = Object.assign({}, injected, {
+    useToasts: (selector) => selector(injected.toasts.getSnapshot()),
+    t: harness.ctx.locale.bind('projectBoard')
+  });
+  injected.toasts.set({ items: [{ id: 't1', tone: 'success', title: 'Restore from archive', message: 'Session restored', at: 1 }] });
+  const instance = harness.runtime.mount(entry.component, props, (node) => harness.doc.__setComponentRoot('toasts', node));
+  instance.render();
+  const toast = harness.doc.querySelector('.pbx-toast');
+  assert.ok(toast, 'the toast is rendered');
+  assert.equal(toast.getAttribute('data-tone'), 'success', 'the success tone reaches the markup');
 });

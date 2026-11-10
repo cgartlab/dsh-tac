@@ -100,6 +100,8 @@
 - 失误：用普通可变对象 `boardViewRef` 作为 prop 传给 React 组件，`requestBoardView` 原地 mutate `seq` 但对象引用不变 → React 不重渲染 → viewRequest effect 不触发 → Alt+N 打开看板时视图不切换 → 规则：跨组件传递可变状态用 `createUiStore`（`.set()` 产生新快照 + emit 订阅者），不用裸对象；组件内用 `useEffect` + `useState` 订阅 store（0.4.0）
 - 失误：GitHub fetch effect 依赖 `githubRepos` 对象引用，而 `mergeSettings` 每次保存都 `cloneJson` 产生新引用 → 改任意设置都重新 fetch 所有仓库 → 规则：effect 依赖用**稳定指纹**（JSON.stringify 关键字段），不用对象引用（0.4.0）
 - 失误：`fetchRepoStats` 的 pulls 请求失败时静默返回 `prs=0`，用户看到"0 个 PR"而不是错误 → 规则：partial success 也报错（pulls !ok → `errorFor`），只有 releases 404（无发布）合法留 `undefined`（0.4.0）
+- 失误：命令面板新增「只看已归档」筛选时，只把它接进了列表过滤，没接进"打开/关闭时重置"和"筛选变化时重置高亮"两处 → 关面板再打开仍停在归档列表（像会话全没了）、切换筛选后高亮停在旧序号（可能一行都不亮）→ 规则：新增一个筛选维度 = 同时改四处（过滤函数、索引重置依赖、滚动到高亮依赖、开关面板的重置清单），并各配一条回归测试 → 证据：0.5.0 后的修复，`src/features/palette.ts`、`test/shortcuts.test.cjs`
+- 失误：行内的「取消归档」按钮没有 in-flight 去重，连点两次会对同一会话发两次请求，第二次落在已恢复的会话上弹无意义错误 → 规则：会改远端状态的按钮在 `await` 期间按 key 去重（`useRef(new Set())`），失败/成功都清掉 → 证据：同上
 
 ## 验证与调试
 
