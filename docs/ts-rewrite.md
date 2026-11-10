@@ -40,7 +40,7 @@ Every module is ported and exercised by the built bundle:
 
 1. `npx tsc --noEmit` clean.
 2. `npm run build` regenerates `client.js` + `index.js` deterministically.
-3. `npm test` — the pre-existing suite passes against the built bundle (13/13).
+3. `npm test` — the pre-existing suite passed against the built bundle at the time (13/13 back then; 141 tests as of this writing — the count keeps growing, so run `npm test` for the current number).
 4. `npm run check` — typecheck, manifest/exports/syntax, i18n parity **and** a check that the
    built bundle embeds every dictionary key.
 5. The plugin hot-reloads in the running GUI and logs `plugin ready`.
