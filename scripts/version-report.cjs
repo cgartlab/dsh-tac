@@ -20,6 +20,7 @@ const { execFileSync } = require('child_process');
 
 const root = path.resolve(__dirname, '..');
 const offline = process.argv.includes('--offline');
+const guiUrl = (process.argv.find((item) => item.startsWith('--gui=')) || '').slice('--gui='.length);
 const CATALOG_URL = 'https://cdn.jsdelivr.net/npm/dsh-plugin-catalog/index.json';
 const PACKAGE = 'dsh-tac';
 
@@ -180,6 +181,27 @@ const changelog = changelogRaw;
       }
     } catch (error) {
       row('GitHub release notes', 'unavailable', 'skipped', 'gh CLI is not available or not authenticated');
+    }
+  }
+  /* The desktop app serves the market's update API without authentication, so `--gui=<url>`
+     lets the report also confirm what the RUNNING app has installed. Without the flag the row is
+     absent: this is a live check, not something CI or an offline release run can do. */
+  if (guiUrl && !offline) {
+    try {
+      const url = guiUrl.replace(/\/$/, '') + '/dsh-market/api/v1/updates?name=' + PACKAGE;
+      const data = await fetchJson(url, 8000);
+      const pkgRow = data && data.package ? data.package : null;
+      if (!pkgRow) {
+        row('running app (market API)', 'no package row', 'skipped', 'the GUI answered without a package entry');
+      } else {
+        const installed = String(pkgRow.installedVersion || '');
+        const latest = String(pkgRow.latestVersion || '');
+        const ok = installed === version;
+        row('running app (market API)', 'installed ' + (installed || '?') + ' / market latest ' + (latest || '?'), ok ? 'local' : 'MISMATCH', ok ? '' : 'the running app still has ' + installed + ' installed — restart or reload it');
+        if (!ok) problems.push('the running app has ' + installed + ' installed but the checkout is ' + version);
+      }
+    } catch (error) {
+      row('running app (market API)', 'unreachable', 'skipped', error.message);
     }
   }
   const width = rows.reduce((max, item) => Math.max(max, item.surface.length), 0);

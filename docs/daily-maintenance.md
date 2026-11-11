@@ -55,7 +55,7 @@ g) 测试：`npm test` 全绿；新行为有回归测试；不得为变绿删测
   `npm publish` 之后跑 `npm run version:report` 一次核对所有版本面（`package.json` / 锁文件 / 两个产物 banner /
   CHANGELOG / tag / npm latest / 市场目录），有 `MISMATCH` 就先修再继续。
   **市场目录 `dsh-plugin-catalog` 每天约 04:50 UTC 重建**，发行后市场页会滞后到次日重建——报告里显示 `lags`
-  属正常等待，不是漏发；次日重建后再跑一次报告确认它已收录。
+  属正常等待，不是漏发；次日重建后再跑一次报告确认它已收录。重启应用后还可用 `npm run version:report -- --gui=http://127.0.0.1:<端口>` 确认运行中的应用确实装的是新版本（读取桌面端免认证的市场更新 API，返回 `installedVersion` / `latestVersion`）。
 - **普通 PR**：不 bump 版本、不打 tag；只确认 `CHANGELOG.md` 的 `[未发布]` 里有该改动
   （缺就补一条，单独一次 `docs:` 提交推到 main），并在报告里写「该发版了」。
 - 发版前四项自检必须全绿：`npm run typecheck` / `npm run build` / `npm run check` / `npm test`。
