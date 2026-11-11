@@ -1,23 +1,37 @@
 {
-  "$comment": "Capture metadata for the README screenshots. `showsVersion` is the release whose UI the image depicts; bump it only after re-capturing (or re-verifying against the current build). `npm run check` fails when it falls behind package.json unless the path is listed in acknowledgedStale with a reason. See docs/screenshots.md.",
+  "$comment": "Capture metadata for the README screenshots. `showsVersion` is the release whose UI the image depicts; bump it only after re-capturing (or re-verifying against the current build). `sources` are the code files the image actually depicts and `verifiedThrough` is the commit at which the image was last confirmed to match them — `npm run check` diffs those files from that commit to HEAD and warns with the changed list, so an outdated capture cannot hide. A `showsVersion` behind package.json fails the check unless the path is listed in acknowledgedStale with a reason. See docs/screenshots.md.",
   "images": [
     {
       "path": "docs/screenshots/board.png",
       "showsVersion": "0.5.1",
       "capturedAt": "2026-11-10",
-      "sha256": "5e7b23928f57a6b4135142aa450eb51132c490fb438e214f9df35300d4d8e644"
+      "sha256": "5e7b23928f57a6b4135142aa450eb51132c490fb438e214f9df35300d4d8e644",
+      "sources": [
+        "src/features/board.ts",
+        "src/features/responsive-board.ts",
+        "src/features/header.ts"
+      ],
+      "verifiedThrough": "c2c93b5"
     },
     {
       "path": "docs/screenshots/hud.png",
       "showsVersion": "0.5.1",
       "capturedAt": "2026-11-10",
-      "sha256": "970397585528031a2877f7a650725421c3f38588cda8eb70ea8a90eb4b513cde"
+      "sha256": "970397585528031a2877f7a650725421c3f38588cda8eb70ea8a90eb4b513cde",
+      "sources": [
+        "src/features/hud.ts"
+      ],
+      "verifiedThrough": "c2c93b5"
     },
     {
       "path": "docs/screenshots/palette.png",
       "showsVersion": "0.4.3",
       "capturedAt": "2026-11-10",
-      "sha256": "6a12b889026947338981e9cc6ba30a27ac557bb09f0e4d8d57d8436c3f740377"
+      "sha256": "6a12b889026947338981e9cc6ba30a27ac557bb09f0e4d8d57d8436c3f740377",
+      "sources": [
+        "src/features/palette.ts"
+      ],
+      "verifiedThrough": "7bd5a07"
     }
   ],
   "acknowledgedStale": [

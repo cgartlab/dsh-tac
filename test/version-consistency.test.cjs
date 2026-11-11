@@ -83,6 +83,8 @@ test('check-screenshots rejects an image replaced without metadata', () => {
       'docs/screenshots/hud.png',
       'docs/screenshots/palette.png'
     ]) copyInto(tmp, file);
+    // The metadata names the source files each image depicts; the check verifies they exist.
+    fs.cpSync(path.join(root, 'src'), path.join(tmp, 'src'), { recursive: true });
 
     const clean = runScript(tmp, 'check-screenshots.cjs');
     assert.equal(clean.status, 0, 'the shipped metadata passes: ' + clean.stderr);
@@ -118,6 +120,9 @@ test('every README screenshot is listed, embedded and version-checked', () => {
     }
     const entry = meta.images.find((candidate) => candidate.path === relative);
     assert.ok(entry, relative + ' has capture metadata');
+    assert.ok(Array.isArray(entry.sources) && entry.sources.length > 0, relative + ' records the sources it depicts');
+    for (const source of entry.sources) assert.ok(fs.existsSync(path.join(root, source)), relative + ' source exists: ' + source);
+    assert.ok(entry.verifiedThrough, relative + ' records the commit it was verified against');
     assert.ok(released.has(entry.showsVersion), relative + ' records a released showsVersion');
     if (entry.showsVersion !== pkg.version) {
       const record = meta.acknowledgedStale.find((candidate) => candidate.path === relative);

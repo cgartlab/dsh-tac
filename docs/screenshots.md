@@ -30,9 +30,21 @@ README（中英文）顶部一共嵌了三张图，它们和代码一样属于�
    ```
 
    同时把 `showsVersion` 改成当前版本、`capturedAt` 改成抓图日期。
-4. `npm run check` —— 结构（文件存在 / PNG / 两份 README 都引用 / 哈希一致）与
+4. 在 `screenshots.meta.json` 里把 `verifiedThrough` 改成当前提交（`git rev-parse --short HEAD`）——
+   它记录"这张图在哪个提交上被确认与管理界面一致"。
+5. `npm run check` —— 结构（文件存在 / PNG / 两份 README 都引用 / 哈希一致）与
    新鲜度（`showsVersion` 是否等于 `package.json` 版本）都会校验。
-5. 连同图、`screenshots.meta.json` 和必要的 CHANGELOG 条目一起提交。
+6. 连同图、`screenshots.meta.json` 和必要的 CHANGELOG 条目一起提交。
+
+### 自动提醒：`sources` + `verifiedThrough`
+
+每张图在 `screenshots.meta.json` 里登记 `sources`（画这张界面的源码文件），检查脚本会
+`git diff <verifiedThrough>..HEAD -- <sources>`：只要这些文件后来动过，就打印一条
+**WARN 并列出改动的文件**，提示「重新确认这张图，还匹配就把 `verifiedThrough` 推进」。
+
+这条提醒**故意只警告不失败**：代码改动可能是纯行为变更（比如某个分支的错误处理），
+截图上看不出来；要不要重抓需要人判断。硬性失败仍然只有三类——图/哈希/引用对不上、
+`showsVersion` 不是已发布版本、或 `showsVersion` 落后当前版本又没登记欠账。
 
 ## 暂时抓不了图：登记欠账
 

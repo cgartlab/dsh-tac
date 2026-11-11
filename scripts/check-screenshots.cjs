@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const fs = require('fs');
+const { execFileSync } = require('child_process');
 const path = require('path');
 
 /*
@@ -96,6 +97,40 @@ for (const relative of images) {
     const record = acknowledged.find((candidate) => candidate && candidate.path === relative);
     if (record) warn(relative + ' shows ' + entry.showsVersion + ' while the package is ' + pkg.version + ' — acknowledged: ' + record.reason);
     else fail(relative + ' shows ' + entry.showsVersion + ' but the package is ' + pkg.version + ' — re-capture it (docs/screenshots.md) or record an acknowledgedStale reason');
+  }
+}
+
+/* Staleness nudge that does not depend on anyone remembering to re-check: the image records
+   the code files it depicts and the commit it was verified against, so any later change to
+   those files is listed here. Cosmetic-only edits (a behavioural branch, a log line) still
+   show up — the warning asks a human to re-check rather than failing the build, because the
+   check cannot tell a visible change from an invisible one. */
+function gitChanged(commit, sources) {
+  if (!commit || !Array.isArray(sources) || sources.length === 0) return null;
+  try {
+    const output = execFileSync('git', ['diff', '--name-only', String(commit) + '..HEAD', '--', ...sources], {
+      cwd: root,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore']
+    }).trim();
+    return output ? output.split('\n') : [];
+  } catch (error) {
+    return null;
+  }
+}
+
+for (const entry of entries) {
+  if (!entry || !entry.path) continue;
+  if (Array.isArray(entry.sources)) {
+    for (const source of entry.sources) {
+      if (!fs.existsSync(path.join(root, source))) fail('screenshots.meta.json: ' + entry.path + ' tracks a missing source file: ' + source);
+    }
+    const changed = gitChanged(entry.verifiedThrough, entry.sources);
+    if (changed === null) {
+      warn(entry.path + ': cannot diff ' + String(entry.verifiedThrough) + ' (missing commit in this clone) — verify the image by hand');
+    } else if (changed.length > 0) {
+      warn(entry.path + ': ' + changed.join(', ') + ' changed since ' + entry.verifiedThrough + ' — re-check the image and bump verifiedThrough when it still matches');
+    }
   }
 }
 
