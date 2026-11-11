@@ -135,3 +135,16 @@ test('version-report --offline agrees on the local surfaces', () => {
   }
   assert.ok(result.stdout.includes(pkg.version), 'the report names the package version');
 });
+test('changelogSection extracts the notes without the dated heading', () => {
+  const { changelogSection } = require('../scripts/version-report.cjs');
+  const changelog = fs.readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8');
+  const pkg = readJson('package.json');
+  const released = ['0.5.1', '0.5.0', '0.4.3'].find((version) => changelog.indexOf('## [' + version + ']') >= 0);
+  assert.ok(released, 'the changelog has at least one released section');
+  const section = changelogSection(changelog, released);
+  assert.ok(section && section.length > 20, 'a released section yields its notes');
+  assert.ok(!section.startsWith('- 2026'), 'the heading date is not part of the notes: ' + section.slice(0, 40));
+  assert.ok(!/^##\s*\[/.test(section), 'the next section is excluded');
+  assert.equal(changelogSection(changelog, '0.0.0-nonexistent'), null, 'an unknown version yields null');
+  assert.ok(changelog.indexOf('[' + pkg.version + ']') >= 0, 'the current version has its own section');
+});

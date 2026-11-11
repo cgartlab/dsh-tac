@@ -75,6 +75,18 @@ async function catalogEntry(version) {
   }
 }
 
+function changelogSection(text, version) {
+  const marker = '## [' + version + ']';
+  const start = text.indexOf(marker);
+  if (start < 0) return null;
+  // Drop the heading line itself (it carries the release date, which the notes do not repeat).
+  const lineEnd = text.indexOf('\n', start);
+  if (lineEnd < 0) return '';
+  const body = text.slice(lineEnd + 1);
+  const next = body.search(/^##\s*\[/m);
+  return (next < 0 ? body : body.slice(0, next)).trim();
+}
+
 async function main() {
   const pkg = readJson('package.json');
   const version = String(pkg.version);
@@ -105,7 +117,8 @@ async function main() {
     if (!ok) problems.push(artifact + ' banner disagrees with package.json');
   }
 
-  const changelog = fs.readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8');
+  const changelogRaw = fs.readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8');
+const changelog = changelogRaw;
   const heading = /^##\s*\[([^\]]+)\]/m.exec(changelog);
   const headingValue = heading ? heading[1] : '(none)';
   const headingOk = headingValue === version || headingValue === '未发布';
@@ -149,6 +162,26 @@ async function main() {
     }
   }
 
+  /* The GitHub release notes are the version's public documentation; they are copied from the
+     changelog section at release time, so a later edit to either one has to be mirrored. `gh` is
+     only present on the release machine, so a missing or unauthenticated CLI skips the row. */
+  if (!offline) {
+    const section = changelogSection(changelogRaw, version);
+    try {
+      const body = execFileSync('gh', ['release', 'view', 'v' + version, '--json', 'body'], { cwd: root, encoding: 'utf8' });
+      const notes = JSON.parse(body).body || '';
+      if (section === null) {
+        row('GitHub release notes', 'no changelog section', 'skipped', 'CHANGELOG has no [' + version + '] section');
+      } else {
+        const normalize = (text) => text.split('\n').map((line) => line.trim()).filter(Boolean).join('\n');
+        const same = normalize(notes) === normalize(section);
+        row('GitHub release notes', same ? 'match CHANGELOG' : 'DIFFERENT', same ? 'remote' : 'MISMATCH', same ? '' : 'edit the release body or the changelog section so both are identical');
+        if (!same) problems.push('GitHub release notes for v' + version + ' differ from the CHANGELOG section');
+      }
+    } catch (error) {
+      row('GitHub release notes', 'unavailable', 'skipped', 'gh CLI is not available or not authenticated');
+    }
+  }
   const width = rows.reduce((max, item) => Math.max(max, item.surface.length), 0);
   for (const item of rows) {
     const verdict = item.verdict.padEnd(9);
@@ -165,7 +198,11 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error('version report failed: ' + (error && error.stack ? error.stack : error));
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error('version report failed: ' + (error && error.stack ? error.stack : error));
+    process.exitCode = 1;
+  });
+} else {
+  module.exports = { changelogSection };
+}

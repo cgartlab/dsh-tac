@@ -58,7 +58,7 @@ CI（`.github/workflows/check.yml`）除此之外还会 `npm ci` 后重建并 `g
 
 1. 改 `package.json` 的 version 与 `CHANGELOG.md` → 2. `npm run build` → 3. 跑上面四项 → 4. commit + push → 5. 打 tag `v<version>` 并 `gh release create v<version>` → 6. `npm publish` → 7. `npm run version:report` 核对全部版本面 → 8. 本机热重载验证（见下）。
 
-`npm run version:report` 一次列出所有版本面（`package.json` / 锁文件 / 两个产物 banner / CHANGELOG 标题 / git tag / npm latest / 市场目录）并标出不一致。**市场目录（`dsh-plugin-catalog`）每天约 04:50 UTC 重建一次**，所以发布后市场页的版本会滞后到次日重建，这是正常现象，不是漏发；报告会把它标成 `lags` 并注明。`--offline` 可跳过联网检查。
+`npm run version:report` 一次列出所有版本面（`package.json` / 锁文件 / 两个产物 banner / CHANGELOG 标题 / git tag / npm latest / GitHub release notes 与 CHANGELOG 小节是否逐行一致 / 市场目录）并标出不一致。**市场目录（`dsh-plugin-catalog`）每天约 04:50 UTC 重建一次**，所以发布后市场页的版本会滞后到次日重建，这是正常现象，不是漏发；报告会把它标成 `lags` 并注明。`--offline` 可跳过联网检查。
 
 ## 调试运行中的插件（本机）
 
