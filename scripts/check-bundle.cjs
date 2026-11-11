@@ -58,6 +58,23 @@ if (pkg) {
   }
 }
 
+/* A release bumps package.json and rebuilds the artifacts; the lockfile is the easy one to
+   forget (0.5.1 shipped with a 0.5.0 lockfile). Both version fields in a lockfile must
+   describe the same package version, otherwise `npm ci` installs a tree recorded for a
+   different release and the repository's version-bearing files silently disagree. */
+if (pkg && fs.existsSync(path.join(root, 'package-lock.json'))) {
+  const lock = checkJson('package-lock.json');
+  if (lock) {
+    const rootVersion = lock.packages && lock.packages[''] ? lock.packages[''].version : undefined;
+    if (lock.version !== pkg.version) {
+      fail('package-lock.json: top-level version "' + String(lock.version) + '" does not match package.json version "' + pkg.version + '" — run npm install --package-lock-only --ignore-scripts');
+    }
+    if (rootVersion !== pkg.version) {
+      fail('package-lock.json: packages[""].version "' + String(rootVersion) + '" does not match package.json version "' + pkg.version + '" — run npm install --package-lock-only --ignore-scripts');
+    }
+  }
+}
+
 if (!checkFile('cordis.patch.yml')) fail('missing cordis.patch.yml');
 if (!checkFile('LICENSE')) fail('missing LICENSE');
 for (const readme of ['README.md', 'README.zh.md']) checkFile(readme);
