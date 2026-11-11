@@ -22,10 +22,11 @@ jobs:
         run: npm run build
       - name: The committed bundle matches src/
         run: git diff --exit-code -- client.js index.js
-      - name: Bundle and manifest checks
-        run: node scripts/check-bundle.cjs
-      - name: i18n parity and bundle embedding
-        run: node scripts/check-i18n.cjs
+      # One entry point for the repository checks (bundle, i18n, screenshots) so a check added
+      # to `npm run check` cannot be missing here — the same enumeration mistake the test step below
+      # warns about. Type check still runs as its own step so its failure is named clearly.
+      - name: Repository checks (bundle, i18n, screenshots)
+        run: npm run check
       # The file list lives in package.json so a new test file cannot be silently skipped here:
       # this step used to enumerate the files and so missed test/github.test.cjs.
       - name: Unit and regression tests

@@ -288,7 +288,7 @@ npm test               # bundle 加载测试 + 快捷键回归
 | 安装命令 | `dsh plugin --profile <profile> add dsh-tac`，或在 DSH 界面点「+ 添加插件」；完整步骤见上方**「安装」**。 |
 | 兼容性 | 已在 DSH `0.2.2-rc.1` 验证（macOS / Windows 桌面版与 Web UI）；Node 18+ 仅用于仓库自检，见**「环境要求」**。 |
 | 许可证 | `CC-BY-NC-SA-4.0` —— `package.json` 的 `license`、页首徽章与下方**「协议」**。 |
-| 截图 | `docs/screenshots/board.png`、`hud.png`、`palette.png`，三张都已嵌在本页上方。 |
+| 截图 | `docs/screenshots/board.png`、`hud.png`、`palette.png`，三张都已嵌在本页上方；抓图要求与新鲜度规则见 [docs/screenshots.md](docs/screenshots.md)，由 `npm run check` 校验。 |
 | 权限与数据 | 见上方**「权限与数据」**：只读会话列表与状态，可选 GitHub API 与系统通知，不读会话内容、不上传。 |
 
 ## 协议

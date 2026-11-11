@@ -1,0 +1,29 @@
+{
+  "$comment": "Capture metadata for the README screenshots. `showsVersion` is the release whose UI the image depicts; bump it only after re-capturing (or re-verifying against the current build). `npm run check` fails when it falls behind package.json unless the path is listed in acknowledgedStale with a reason. See docs/screenshots.md.",
+  "images": [
+    {
+      "path": "docs/screenshots/board.png",
+      "showsVersion": "0.5.1",
+      "capturedAt": "2026-11-10",
+      "sha256": "5e7b23928f57a6b4135142aa450eb51132c490fb438e214f9df35300d4d8e644"
+    },
+    {
+      "path": "docs/screenshots/hud.png",
+      "showsVersion": "0.5.1",
+      "capturedAt": "2026-11-10",
+      "sha256": "970397585528031a2877f7a650725421c3f38588cda8eb70ea8a90eb4b513cde"
+    },
+    {
+      "path": "docs/screenshots/palette.png",
+      "showsVersion": "0.4.3",
+      "capturedAt": "2026-11-10",
+      "sha256": "6a12b889026947338981e9cc6ba30a27ac557bb09f0e4d8d57d8436c3f740377"
+    }
+  ],
+  "acknowledgedStale": [
+    {
+      "path": "docs/screenshots/palette.png",
+      "reason": "Predates the 0.5.0 archived-only chip (and the 0.5.1 restore hint); needs a re-capture from a session running 0.5.1+ so the 只看已归档 chip is visible next to the project chips."
+    }
+  ]
+}

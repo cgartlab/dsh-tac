@@ -22,10 +22,11 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "typecheck": "tsc --noEmit",
-    "check": "tsc --noEmit && node scripts/check-bundle.cjs && node scripts/check-i18n.cjs",
+    "check": "tsc --noEmit && node scripts/check-bundle.cjs && node scripts/check-i18n.cjs && node scripts/check-screenshots.cjs",
     "check:bundle": "node scripts/check-bundle.cjs",
     "check:i18n": "node scripts/check-i18n.cjs",
-    "test": "node --test test/load.test.cjs test/shortcuts.test.cjs test/github.test.cjs test/notifications.test.cjs test/lockfile-version.test.cjs"
+    "check:screenshots": "node scripts/check-screenshots.cjs",
+    "test": "node --test test/load.test.cjs test/shortcuts.test.cjs test/github.test.cjs test/notifications.test.cjs test/lockfile-version.test.cjs test/version-consistency.test.cjs"
   },
   "peerDependencies": {
     "react": "^18.2.0"

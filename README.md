@@ -328,7 +328,7 @@ Everything a marketplace submission asks for, and where each field lives in this
 | Install command | `dsh plugin --profile <profile> add dsh-tac`, or the in-app **"+ Add plugin"** flow. Full steps in **Install** above. |
 | Compatibility | Verified against DSH `0.2.2-rc.1` (desktop on macOS / Windows, and the web UI); Node 18+ is only needed for repository checks. See **Requirements**. |
 | License | `CC-BY-NC-SA-4.0` — `package.json` `license`, the badge at the top, and **License** below. |
-| Screenshots | `docs/screenshots/board.png`, `hud.png`, `palette.png` — all embedded near the top of this README. |
+| Screenshots | `docs/screenshots/board.png`, `hud.png`, `palette.png` — all embedded near the top of this README; capture and freshness rules live in [docs/screenshots.md](docs/screenshots.md) and are enforced by `npm run check`. |
 | Permissions & data | See **Permissions & data** above: session list/status only, optional GitHub API and system notifications, no conversation content and no upload. |
 
 ## License

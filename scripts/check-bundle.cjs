@@ -122,6 +122,20 @@ if (pkg && pkg.name && checkFile('client.js')) {
   }
 }
 
+/* Both artifacts carry the version in their banner. A release that bumps package.json without
+   rebuilding would ship a tarball whose banner names the previous version, and `npm run check`
+   alone would not notice (CI rebuilds and diffs, local runs do not). */
+if (pkg && pkg.version) {
+  for (const artifact of ['client.js', 'index.js']) {
+    if (!checkFile(artifact)) continue;
+    const head = fs.readFileSync(path.join(root, artifact), 'utf8').split('\n', 1)[0];
+    const banner = /^\/\*! dsh-tac ([^\s]+) — generated from src\//.exec(head);
+    if (!banner) fail(artifact + ': missing the generated banner — run `npm run build`');
+    else if (banner[1] !== pkg.version) {
+      fail(artifact + ': banner version "' + banner[1] + '" does not match package.json version "' + pkg.version + '" — run `npm run build`');
+    }
+  }
+}
 if (failures.length > 0) {
   console.error('\n' + failures.length + ' check(s) failed');
   process.exitCode = 1;

@@ -1,5 +1,9 @@
 # 更新日志
 
+## [未发布]
+
+- **版本与截图一致性纳入强制检查**：`npm run check` 现在会校验两件事——构建产物 banner 里的版本必须等于 `package.json`（以前只有 CI 重建后 diff 才发现），README 截图必须存在于 `screenshots.json`、被中英文 README 同时引用、且 `screenshots.meta.json` 的哈希与实际文件一致；截图记录的「展示版本」（`showsVersion`）落后于当前版本时会报错，确实暂时不重抓的可在 `acknowledgedStale` 里写明原因降级为警告。新增 `docs/screenshots.md` 说明每张图要展示什么、怎么更新。
+
 这份日志用大白话记录每个版本"用起来有什么变化"，不写内部实现。
 
 版本号从 `0.1.0` 开始。现在改成"攒一批改动再发一个版本"：日常小改先记在下面的
