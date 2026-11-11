@@ -1,5 +1,9 @@
 # 更新日志
 
+## [0.5.2] - 2026-11-12
+
+- **修复：归档和取消归档点了没反应。** 插件把这两个动作当成在 `workspaces` 服务上调用，而当前 DSH 客户端实际由 `uiWorkspace` 服务提供它们，于是两边都直接返回"客户端没有提供该接口"：HUD 悬浮列表的归档按钮、会话菜单里的归档、命令面板里的取消归档全部无效。现在优先调用 `uiWorkspace`，旧宿主上的 `workspaces` 作为回退；两处都找不到时才提示不支持。
+
 ## [未发布]
 
 - **版本与截图一致性纳入强制检查**：`npm run check` 现在会校验两件事——构建产物 banner 里的版本必须等于 `package.json`（以前只有 CI 重建后 diff 才发现），README 截图必须存在于 `screenshots.json`、被中英文 README 同时引用、且 `screenshots.meta.json` 的哈希与实际文件一致；截图记录的「展示版本」（`showsVersion`）落后于当前版本时会报错，确实暂时不重抓的可在 `acknowledgedStale` 里写明原因降级为警告。新增 `docs/screenshots.md` 说明每张图要展示什么、怎么更新；每张图还登记了它对应的源码文件（`sources`）与「确认到哪个提交」（`verifiedThrough`），这些文件之后一改动，`npm run check` 就会列出改动文件提醒重新确认截图。两份 README 页首加了 npm 版本徽章（shields.io 实时读 registry，不会像写死的版本号那样过期）。另外新增 `npm run version:report`：一次列出 `package.json`、锁文件、两个产物 banner、CHANGELOG、git tag、npm latest 与市场目录的版本，标出不一致（包括 GitHub release notes 与 CHANGELOG 对应小节是否逐行一致、`--gui=` 时运行中的应用实际安装的版本；市场目录每天重建一次，滞后会明确标注为等待下次重建，而不是漏发）。

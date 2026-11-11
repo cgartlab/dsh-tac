@@ -3,7 +3,7 @@
   "images": [
     {
       "path": "docs/screenshots/board.png",
-      "showsVersion": "0.5.1",
+      "showsVersion": "0.5.2",
       "capturedAt": "2026-11-10",
       "sha256": "5e7b23928f57a6b4135142aa450eb51132c490fb438e214f9df35300d4d8e644",
       "sources": [
@@ -15,7 +15,7 @@
     },
     {
       "path": "docs/screenshots/hud.png",
-      "showsVersion": "0.5.1",
+      "showsVersion": "0.5.2",
       "capturedAt": "2026-11-10",
       "sha256": "970397585528031a2877f7a650725421c3f38588cda8eb70ea8a90eb4b513cde",
       "sources": [

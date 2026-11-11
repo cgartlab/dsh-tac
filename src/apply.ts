@@ -711,13 +711,25 @@ export function apply(ctx: HostContext): void {
   const closeSessionMenu = (): void => {
     sessionMenuStore.set({ sessionId: null, title: '', at: 0 });
   };
+  /* Session archive actions live on the host's `uiWorkspace` client service
+     (`archiveSession(sessionId, options)` / `unarchiveSession(sessionId)`). An older host put
+     them on a plain `workspaces` service, so that name stays as a fallback: the archive and
+     restore paths must not silently disappear when only one of the two exists. Looked up per
+     call, not cached, so a host that upgrades while the app runs keeps working. */
+  const workspaceActions = (): Record<string, unknown> | null => {
+    for (const name of ['uiWorkspace', 'workspaces']) {
+      const service = optionalService<Record<string, unknown>>(ctx, name);
+      if (service && (typeof service.archiveSession === 'function' || typeof service.unarchiveSession === 'function')) return service;
+    }
+    return null;
+  };
   const archiveSession = async (sessionId: string): Promise<{ ok?: boolean; error?: { code?: string; message?: string } }> => {
     try {
-      const workspaces = optionalService<{ archiveSession?: (id: string) => Promise<void> }>(ctx, 'workspaces');
-      if (!workspaces || typeof workspaces.archiveSession !== 'function') {
+      const host = workspaceActions();
+      if (!host || typeof host.archiveSession !== 'function') {
         return { ok: false, error: { code: 'unsupported', message: 'session archive is unavailable' } };
       }
-      await workspaces.archiveSession(sessionId);
+      await (host.archiveSession as (id: string) => Promise<void>)(sessionId);
       return { ok: true };
     } catch (error) {
       const rpc = (error as { rpcError?: { code?: string } } | null)?.rpcError;
@@ -727,11 +739,11 @@ export function apply(ctx: HostContext): void {
   /** Undo an archive: put the session back into the active and recent lists. */
   const unarchiveSession = async (sessionId: string): Promise<{ ok?: boolean; error?: { code?: string; message?: string } }> => {
     try {
-      const workspaces = optionalService<{ unarchiveSession?: (id: string) => Promise<void> }>(ctx, 'workspaces');
-      if (!workspaces || typeof workspaces.unarchiveSession !== 'function') {
+      const host = workspaceActions();
+      if (!host || typeof host.unarchiveSession !== 'function') {
         return { ok: false, error: { code: 'unsupported', message: 'session unarchive is unavailable' } };
       }
-      await workspaces.unarchiveSession(sessionId);
+      await (host.unarchiveSession as (id: string) => Promise<void>)(sessionId);
       return { ok: true };
     } catch (error) {
       const rpc = (error as { rpcError?: { code?: string } } | null)?.rpcError;

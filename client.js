@@ -1,4 +1,4 @@
-/*! dsh-tac 0.5.1 — generated from src/ by scripts/build.mjs; do not edit */
+/*! dsh-tac 0.5.2 — generated from src/ by scripts/build.mjs; do not edit */
 "use strict";
 (() => {
   // src/constants.ts
@@ -7773,13 +7773,20 @@
     const closeSessionMenu = () => {
       sessionMenuStore.set({ sessionId: null, title: "", at: 0 });
     };
+    const workspaceActions = () => {
+      for (const name of ["uiWorkspace", "workspaces"]) {
+        const service = optionalService(ctx, name);
+        if (service && (typeof service.archiveSession === "function" || typeof service.unarchiveSession === "function")) return service;
+      }
+      return null;
+    };
     const archiveSession = async (sessionId) => {
       try {
-        const workspaces = optionalService(ctx, "workspaces");
-        if (!workspaces || typeof workspaces.archiveSession !== "function") {
+        const host = workspaceActions();
+        if (!host || typeof host.archiveSession !== "function") {
           return { ok: false, error: { code: "unsupported", message: "session archive is unavailable" } };
         }
-        await workspaces.archiveSession(sessionId);
+        await host.archiveSession(sessionId);
         return { ok: true };
       } catch (error) {
         const rpc = error?.rpcError;
@@ -7788,11 +7795,11 @@
     };
     const unarchiveSession = async (sessionId) => {
       try {
-        const workspaces = optionalService(ctx, "workspaces");
-        if (!workspaces || typeof workspaces.unarchiveSession !== "function") {
+        const host = workspaceActions();
+        if (!host || typeof host.unarchiveSession !== "function") {
           return { ok: false, error: { code: "unsupported", message: "session unarchive is unavailable" } };
         }
-        await workspaces.unarchiveSession(sessionId);
+        await host.unarchiveSession(sessionId);
         return { ok: true };
       } catch (error) {
         const rpc = error?.rpcError;

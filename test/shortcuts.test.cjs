@@ -649,12 +649,16 @@ function createServices() {
     sidebarOpenTab: [],
     sidebarToggleExpanded: [],
     layoutToggleSidebar: [],
-    setRightbar: []
+    setRightbar: [],
+    archive: [],
+    unarchive: []
   };
   return {
     calls,
     uiWorkspace: {
-      openSession(sessionId) { calls.openSession.push(sessionId); }
+      openSession(sessionId) { calls.openSession.push(sessionId); },
+      archiveSession(sessionId) { calls.archive.push(sessionId); return Promise.resolve(); },
+      unarchiveSession(sessionId) { calls.unarchive.push(sessionId); return Promise.resolve(); }
     },
     sidebarRight: {
       active: () => undefined,
@@ -4514,4 +4518,47 @@ test('the palette footer offers the restore hint only for an archived selection'
   harness.doc.querySelectorAll('.pbx-pchip')[1].props.onClick({});
   harness.render();
   assert.ok(foot().indexOf('Shift+Enter') >= 0, 'the restore hint appears when the selection is archived');
+});
+test('archiving through the session menu calls the host uiWorkspace service', async () => {
+  const harness = createHarness();
+  const entry = harness.registrations.find((item) => item.spec.id === 'project-board-session-menu');
+  assert.ok(entry, 'the session menu is registered');
+  const injected = entry.spec.inject();
+  const result = await injected.archiveSession('s2');
+  assert.deepEqual(harness.services.calls.archive, ['s2'], 'the host uiWorkspace.archiveSession receives the id');
+  assert.equal(result.ok, true, 'the caller sees success');
+});
+
+test('restoring through the palette bridge calls the host uiWorkspace service', async () => {
+  const harness = createHarness();
+  const entry = harness.registrations.find((item) => item.spec.id === 'project-board-palette');
+  const injected = entry.spec.inject();
+  const result = await injected.unarchiveSession('s3');
+  assert.deepEqual(harness.services.calls.unarchive, ['s3'], 'the host uiWorkspace.unarchiveSession receives the id');
+  assert.equal(result.ok, true, 'the caller sees success');
+});
+
+test('a host without uiWorkspace archive falls back to the legacy workspaces service', async () => {
+  const harness = createHarness();
+  delete harness.services.uiWorkspace.archiveSession;
+  delete harness.services.uiWorkspace.unarchiveSession;
+  const legacy = { archiveSession: (id) => { harness.services.calls.archive.push('legacy:' + id); return Promise.resolve(); }, unarchiveSession: (id) => { harness.services.calls.unarchive.push('legacy:' + id); return Promise.resolve(); } };
+  harness.services.workspaces = legacy;
+  const menu = harness.registrations.find((item) => item.spec.id === 'project-board-session-menu').spec.inject();
+  const palette = harness.registrations.find((item) => item.spec.id === 'project-board-palette').spec.inject();
+  assert.equal((await menu.archiveSession('s1')).ok, true, 'archive falls back');
+  assert.equal((await palette.unarchiveSession('s1')).ok, true, 'restore falls back');
+  assert.deepEqual(harness.services.calls.archive, ['legacy:s1'], 'the legacy archive service was used');
+  assert.deepEqual(harness.services.calls.unarchive, ['legacy:s1'], 'the legacy unarchive service was used');
+});
+
+test('without either archive service the caller gets an explicit unsupported result', async () => {
+  const harness = createHarness();
+  delete harness.services.uiWorkspace.archiveSession;
+  delete harness.services.uiWorkspace.unarchiveSession;
+  delete harness.services.workspaces;
+  const menu = harness.registrations.find((item) => item.spec.id === 'project-board-session-menu').spec.inject();
+  const palette = harness.registrations.find((item) => item.spec.id === 'project-board-palette').spec.inject();
+  assert.equal((await menu.archiveSession('s1')).error.code, 'unsupported', 'archive reports unsupported');
+  assert.equal((await palette.unarchiveSession('s1')).error.code, 'unsupported', 'restore reports unsupported');
 });

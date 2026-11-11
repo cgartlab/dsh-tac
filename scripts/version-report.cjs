@@ -21,6 +21,9 @@ const { execFileSync } = require('child_process');
 const root = path.resolve(__dirname, '..');
 const offline = process.argv.includes('--offline');
 const guiUrl = (process.argv.find((item) => item.startsWith('--gui=')) || '').slice('--gui='.length);
+/* A release bumps the version before it can tag it, so the pre-tag state is legitimate; this flag
+   records that intent instead of reporting a missing tag as a failure. */
+const preRelease = process.argv.includes('--pre-release');
 const CATALOG_URL = 'https://cdn.jsdelivr.net/npm/dsh-plugin-catalog/index.json';
 const PACKAGE = 'dsh-tac';
 
@@ -136,8 +139,12 @@ const changelog = changelogRaw;
     row('git tag', 'none fetched', 'skipped', 'this clone has no tags (shallow checkout)');
   } else {
     const tagOk = tags.indexOf('v' + version) >= 0;
-    row('git tag', tagOk ? 'v' + version : '(missing)', tagOk ? 'local' : 'MISMATCH', tagOk ? '' : 'git tag v' + version);
-    if (!tagOk) problems.push('git tag v' + version + ' is missing');
+    if (tagOk) row('git tag', 'v' + version, 'local', '');
+    else if (preRelease) row('git tag', '(not yet)', 'pending', 'tag v' + version + ' is created after the release commit');
+    else {
+      row('git tag', '(missing)', 'MISMATCH', 'git tag v' + version);
+      problems.push('git tag v' + version + ' is missing');
+    }
   }
 
   if (offline) {

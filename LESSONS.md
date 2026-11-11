@@ -5,6 +5,7 @@
 > 权威依据：Anthropic Claude Code memory/best practices（<200 行、具体可验证、第二次犯同样错即写入）；社区 lessons.md 惯例（Boris Cherny，Anthropic）。
 > 来源：本仓库 `CHANGELOG.md` 记录的真实修复（0.1.12、0.1.14、0.2.1–0.2.5）+ 0.3.0 TypeScript 重写过程中踩到的坑；预填为种子，后续由 Agent 在真实工作中增长。
 
+- 失误：归档/取消归档写死调用 `optionalService(ctx,'workspaces')`，而宿主真实暴露该能力的是 `uiWorkspace` 服务（`archiveSession(sessionId, options)` / `unarchiveSession(sessionId)`），于是两条路径都返回 `unsupported`、按钮点了没反应（用户报告：归档与取消归档都无效，0.5.1）→ 规则：**客户端服务名与方法签名必须从宿主源码验证**（`resources/app.asar` 里的 `@deepseek-ai/dsh-client-ui-*`），不能从旧版本记忆推断；可选能力要按"实际方法存在"探测（尝试 `uiWorkspace` → 回退 `workspaces`），并且**测试要覆盖真实服务接线**（vm 沙箱里给 `uiWorkspace` 打桩断言调用），只测注入的 props 会漏掉服务名错误。
 ## 维护
 
 - **触发**：用户纠正 / Agent 自查到的失误 / 非显而易见的 gotcha。
