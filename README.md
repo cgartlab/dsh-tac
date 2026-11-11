@@ -1,6 +1,7 @@
 # dsh-tac
 
 [![check](https://github.com/cgartlab/dsh-tac/actions/workflows/check.yml/badge.svg)](https://github.com/cgartlab/dsh-tac/actions/workflows/check.yml)
+[![npm version](https://img.shields.io/npm/v/dsh-tac.svg)](https://www.npmjs.com/package/dsh-tac)
 [![license: CC BY-NC-SA 4.0](https://img.shields.io/badge/license-CC%20BY--NC--SA%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by-nc-sa/4.0/)
 
 English | [中文](README.zh.md)
