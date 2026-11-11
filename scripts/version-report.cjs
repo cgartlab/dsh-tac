@@ -112,10 +112,19 @@ async function main() {
   row('CHANGELOG heading', headingValue, headingOk ? 'local' : 'MISMATCH', headingOk ? '' : 'newest section must be the released version or [未发布]');
   if (!headingOk) problems.push('CHANGELOG heading disagrees with package.json');
 
-  const tag = git(['tag', '--list', 'v' + version]);
-  const tagOk = tag === 'v' + version;
-  row('git tag', tagOk ? tag : '(missing)', tagOk ? 'local' : 'MISMATCH', tagOk ? '' : 'git tag v' + version);
-  if (!tagOk) problems.push('git tag v' + version + ' is missing');
+  /* A shallow clone (CI) has no tags at all — that is not a version problem, just a checkout
+     that cannot answer. Only a missing tag in a clone that does have tags is a real gap. */
+  const tagOutput = git(['tag', '--list']);
+  const tags = tagOutput === null ? null : tagOutput.split('\n').map((item) => item.trim()).filter(Boolean);
+  if (tags === null) {
+    row('git tag', 'unavailable', 'skipped', 'git is not available');
+  } else if (tags.length === 0) {
+    row('git tag', 'none fetched', 'skipped', 'this clone has no tags (shallow checkout)');
+  } else {
+    const tagOk = tags.indexOf('v' + version) >= 0;
+    row('git tag', tagOk ? 'v' + version : '(missing)', tagOk ? 'local' : 'MISMATCH', tagOk ? '' : 'git tag v' + version);
+    if (!tagOk) problems.push('git tag v' + version + ' is missing');
+  }
 
   if (offline) {
     row('npm registry', 'skipped', 'skipped', '--offline');
