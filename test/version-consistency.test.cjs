@@ -125,3 +125,13 @@ test('every README screenshot is listed, embedded and version-checked', () => {
     }
   }
 });
+
+test('version-report --offline agrees on the local surfaces', () => {
+  const result = spawnSync(process.execPath, [path.join(root, 'scripts', 'version-report.cjs'), '--offline'], { cwd: root, encoding: 'utf8' });
+  assert.equal(result.status, 0, 'the checkout is self-consistent: ' + result.stderr + result.stdout);
+  const pkg = readJson('package.json');
+  for (const surface of ['package.json', 'package-lock.json', 'client.js banner', 'index.js banner', 'git tag']) {
+    assert.ok(result.stdout.includes(surface), 'the report covers ' + surface);
+  }
+  assert.ok(result.stdout.includes(pkg.version), 'the report names the package version');
+});

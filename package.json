@@ -26,6 +26,7 @@
     "check:bundle": "node scripts/check-bundle.cjs",
     "check:i18n": "node scripts/check-i18n.cjs",
     "check:screenshots": "node scripts/check-screenshots.cjs",
+    "version:report": "node scripts/version-report.cjs",
     "test": "node --test test/load.test.cjs test/shortcuts.test.cjs test/github.test.cjs test/notifications.test.cjs test/lockfile-version.test.cjs test/version-consistency.test.cjs"
   },
   "peerDependencies": {

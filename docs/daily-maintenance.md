@@ -51,7 +51,11 @@ g) 测试：`npm test` 全绿；新行为有回归测试；不得为变绿删测
 - **发版 PR**（改了 version + 有 `[<version>]` CHANGELOG 小节 + 已重建产物）合并后：
   `git tag v<version> && git push origin v<version>`；
   `gh release create v<version> --title "v<version> — <一句话>" --notes "<CHANGELOG 该版本条目>"`。
-  发版后核对：tag 指向 main 的 merge commit、`gh release list --limit 1` 正确、产物 banner 版本与 tag 一致。
+  发版后核对：tag 指向 main 的 merge commit、`gh release list --limit 1` 正确、产物 banner 版本与 tag 一致；
+  `npm publish` 之后跑 `npm run version:report` 一次核对所有版本面（`package.json` / 锁文件 / 两个产物 banner /
+  CHANGELOG / tag / npm latest / 市场目录），有 `MISMATCH` 就先修再继续。
+  **市场目录 `dsh-plugin-catalog` 每天约 04:50 UTC 重建**，发行后市场页会滞后到次日重建——报告里显示 `lags`
+  属正常等待，不是漏发；次日重建后再跑一次报告确认它已收录。
 - **普通 PR**：不 bump 版本、不打 tag；只确认 `CHANGELOG.md` 的 `[未发布]` 里有该改动
   （缺就补一条，单独一次 `docs:` 提交推到 main），并在报告里写「该发版了」。
 - 发版前四项自检必须全绿：`npm run typecheck` / `npm run build` / `npm run check` / `npm test`。
