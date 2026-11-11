@@ -153,3 +153,34 @@ test('changelogSection extracts the notes without the dated heading', () => {
   assert.equal(changelogSection(changelog, '0.0.0-nonexistent'), null, 'an unknown version yields null');
   assert.ok(changelog.indexOf('[' + pkg.version + ']') >= 0, 'the current version has its own section');
 });
+test('check-bundle rejects a changelog whose sections are out of order', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-tac-changelog-'));
+  try {
+    for (const file of [
+      'package.json',
+      'package-lock.json',
+      'client.js',
+      'index.js',
+      'cordis.patch.yml',
+      'LICENSE',
+      'README.md',
+      'README.zh.md',
+      'icon.svg',
+      'src/constants.ts',
+      'locale/zh.json',
+      'locale/en.json',
+      'scripts/check-bundle.cjs'
+    ]) copyInto(tmp, file);
+    const pkg = readJson('package.json');
+    const changelog = fs.readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8');
+    const misplaced = changelog.replace(/## \[未发布\]\n/, '').replace('## [0.5.1]', '## [未发布]\n\n- buried entry\n\n## [0.5.1]');
+    assert.notEqual(misplaced, changelog, 'the fixture actually moves the bucket');
+    fs.writeFileSync(path.join(tmp, 'CHANGELOG.md'), misplaced);
+
+    const result = runScript(tmp, 'check-bundle.cjs');
+    assert.equal(result.status, 1, 'a misplaced [未发布] section fails the bundle checks');
+    assert.match(result.stderr, /\[未发布\] must be the first section|sections must descend/);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});

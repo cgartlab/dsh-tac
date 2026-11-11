@@ -90,6 +90,31 @@ if (checkFile('CHANGELOG.md')) {
   else if (heading[1] !== '未发布' && pkg && pkg.version && heading[1] !== pkg.version) {
     fail('CHANGELOG.md: newest entry ' + heading[1] + ' does not match package.json version ' + pkg.version);
   }
+  /* Sections have an order: an unreleased bucket only ever sits on top, and released versions
+     strictly descend. A section inserted with the wrong anchor (which once put the preface text
+     inside an older section) would otherwise pass every other check. */
+  const headings = Array.from(changelog.matchAll(/^##\s*\[([^\]]+)\]/gm), (match) => match[1]);
+  const versions = [];
+  for (const [index, name] of headings.entries()) {
+    if (name === '未发布') {
+      if (index !== 0) fail('CHANGELOG.md: [未发布] must be the first section (found at position ' + (index + 1) + ')');
+      continue;
+    }
+    if (!/^\d+\.\d+\.\d+$/.test(name)) {
+      fail('CHANGELOG.md: section "' + name + '" is neither a version nor [未发布]');
+      continue;
+    }
+    versions.push(name);
+  }
+  for (let index = 1; index < versions.length; index += 1) {
+    const previous = versions[index - 1].split('.').map(Number);
+    const current = versions[index].split('.').map(Number);
+    const descending = previous[0] > current[0] || (previous[0] === current[0] && (previous[1] > current[1] || (previous[1] === current[1] && previous[2] > current[2])));
+    if (!descending) fail('CHANGELOG.md: sections must descend, found ' + versions[index - 1] + ' before ' + versions[index]);
+  }
+  for (const name of new Set(versions)) {
+    if (versions.filter((item) => item === name).length > 1) fail('CHANGELOG.md: duplicate section [' + name + ']');
+  }
 }
 
 // The package name is the plugin's identity in three places at once: package.json,
