@@ -6,6 +6,7 @@
 > 来源：本仓库 `CHANGELOG.md` 记录的真实修复（0.1.12、0.1.14、0.2.1–0.2.5）+ 0.3.0 TypeScript 重写过程中踩到的坑；预填为种子，后续由 Agent 在真实工作中增长。
 
 - 失误：归档/取消归档写死调用 `optionalService(ctx,'workspaces')`，而宿主真实暴露该能力的是 `uiWorkspace` 服务（`archiveSession(sessionId, options)` / `unarchiveSession(sessionId)`），于是两条路径都返回 `unsupported`、按钮点了没反应（用户报告：归档与取消归档都无效，0.5.1）→ 规则：**客户端服务名与方法签名必须从宿主源码验证**（`resources/app.asar` 里的 `@deepseek-ai/dsh-client-ui-*`），不能从旧版本记忆推断；可选能力要按"实际方法存在"探测（尝试 `uiWorkspace` → 回退 `workspaces`），并且**测试要覆盖真实服务接线**（vm 沙箱里给 `uiWorkspace` 打桩断言调用），只测注入的 props 会漏掉服务名错误。
+- 失误：HUD 为了让悬浮列表不挡对话，在对话滚动容器上写 `paddingLeft/Right`，而 `MutationObserver(childList, subtree)` 在每条流式消息的 DOM 变化上都会重跑 `apply()`——旧实现每次先清空再重设，一次回调两次布局失效；这会在宿主"回到底部"平滑滚动进行中打断它，表现为**偶尔点原生向下箭头跳不到最底**（0.5.2 修复）→ 规则：**对宿主元素写 style 必须是幂等的**，记住当前节点与值、值没变就完全不要碰 style；流式内容引起的回调非常频繁，任何"先清空再写回"的写法都等于持续制造布局抖动。回归测试用计数 style 代理断言"重复 mutation 不再产生写入"，并已验证旧实现会失败（22 次写 vs 7 次）。
 ## 维护
 
 - **触发**：用户纠正 / Agent 自查到的失误 / 非显而易见的 gotcha。

@@ -4562,3 +4562,48 @@ test('without either archive service the caller gets an explicit unsupported res
   assert.equal((await menu.archiveSession('s1')).error.code, 'unsupported', 'archive reports unsupported');
   assert.equal((await palette.unarchiveSession('s1')).error.code, 'unsupported', 'restore reports unsupported');
 });
+test('repeated transcript mutations do not re-write the HUD gutter padding', () => {
+  const harness = createHarness();
+  /* Host frame: a centre column with the chat scroller inside it, plus the floating list.
+     The scroller's style is a counting proxy, so a redundant write is observable. */
+  const column = new VirtualNode('div', { class: 'AppFrame_centerCol' }, [], harness.doc);
+  const scroller = new VirtualNode('div', { class: 'native-scroll' }, [], harness.doc);
+  const flow = new VirtualNode('div', { 'data-slot': 'conversation.chat.flow' }, [], harness.doc);
+  const writes = [];
+  const style = new Proxy({}, {
+    set(target, prop, value) { writes.push(String(prop) + '=' + value); target[prop] = value; return true; },
+    get(target, prop) { return target[prop]; }
+  });
+  scroller.style = style;
+  const rect = { width: 900, height: 700, top: 0, left: 0, right: 900, bottom: 700 };
+  scroller.getBoundingClientRect = () => rect;
+  flow.getBoundingClientRect = () => ({ width: 860, height: 320, top: 40, left: 20, right: 880, bottom: 360 });
+  scroller.scrollHeight = 2000;
+  scroller.clientHeight = 700;
+  column.getBoundingClientRect = () => rect;
+  scroller.appendChild(flow);
+  column.appendChild(scroller);
+  harness.doc.__addRoot(column);
+  const previousComputedStyle = harness.window.getComputedStyle;
+  harness.window.getComputedStyle = (node) => (node === scroller ? { overflowY: 'auto' } : { overflowY: 'visible' });
+
+  harness.mountHud('hud');
+  const hud = harness.doc.querySelector('.pbx-hud');
+  assert.ok(hud, 'the floating list renders');
+  hud.getBoundingClientRect = () => ({ width: 260, height: 200, top: 480, left: 20, right: 280, bottom: 680 });
+  /* The list box only exists after the first render, so one more pass settles the gutter. */
+  harness.flushMutations();
+
+  const afterMount = writes.length;
+  assert.ok(afterMount > 0, 'the first pass reserves the gutter');
+  assert.equal(scroller.style.paddingLeft, '294px', 'the gutter matches the list width plus the gap');
+
+  /* A streaming reply mutates the transcript constantly; none of that may touch the style
+     sheet again, or the chat view's own jump-to-bottom animation gets cancelled mid-flight. */
+  for (let i = 0; i < 5; i += 1) harness.flushMutations();
+  assert.equal(writes.length, afterMount, 'idempotent padding: no writes on unchanged mutations');
+  assert.equal(scroller.style.paddingLeft, '294px', 'the gutter is still reserved');
+
+  harness.window.getComputedStyle = previousComputedStyle;
+  harness.doc.__removeRoot(column);
+});

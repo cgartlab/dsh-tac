@@ -5577,28 +5577,44 @@
     useLayoutEffectSafe(() => {
       const gap = 14;
       let padded = null;
-      const clear = () => {
-        if (!padded) return;
-        padded.style.paddingLeft = "";
-        padded.style.paddingRight = "";
-        padded = null;
+      let paddedLeft = "";
+      let paddedRight = "";
+      const release = (node) => {
+        if (!node) return;
+        if (node.style.paddingLeft) node.style.paddingLeft = "";
+        if (node.style.paddingRight) node.style.paddingRight = "";
       };
       const apply2 = () => {
-        clear();
         const box = hudRef.current;
         const scroller = findChatScroller();
-        if (collapsed || !box || !scroller) return;
-        if (!isInsideCentreColumn(scroller)) return;
-        const rect = box.getBoundingClientRect();
-        const srect = scroller.getBoundingClientRect();
-        if (!srect.width) return;
-        const leftSide = rect.left + rect.width / 2 <= srect.left + srect.width / 2;
-        const reserve = leftSide ? Math.round(rect.right + gap - srect.left) : Math.round(srect.right - (rect.left - gap));
-        if (reserve <= 0) return;
-        if (srect.width - reserve < 360) return;
-        padded = scroller;
-        if (leftSide) scroller.style.paddingLeft = reserve + "px";
-        else scroller.style.paddingRight = reserve + "px";
+        let nextLeft = "";
+        let nextRight = "";
+        if (!collapsed && box && scroller && isInsideCentreColumn(scroller)) {
+          const rect = box.getBoundingClientRect();
+          const srect = scroller.getBoundingClientRect();
+          if (srect.width) {
+            const leftSide = rect.left + rect.width / 2 <= srect.left + srect.width / 2;
+            const reserve = leftSide ? Math.round(rect.right + gap - srect.left) : Math.round(srect.right - (rect.left - gap));
+            if (reserve > 0 && srect.width - reserve >= 360) {
+              if (leftSide) nextLeft = reserve + "px";
+              else nextRight = reserve + "px";
+            }
+          }
+        }
+        const target = nextLeft || nextRight ? scroller : null;
+        if (padded && padded !== target) {
+          release(padded);
+          padded = null;
+          paddedLeft = "";
+          paddedRight = "";
+        }
+        if (!target) return;
+        if (padded === target && paddedLeft === nextLeft && paddedRight === nextRight) return;
+        padded = target;
+        paddedLeft = nextLeft;
+        paddedRight = nextRight;
+        if (target.style.paddingLeft !== nextLeft) target.style.paddingLeft = nextLeft;
+        if (target.style.paddingRight !== nextRight) target.style.paddingRight = nextRight;
       };
       apply2();
       let frame = 0;
@@ -5626,7 +5642,8 @@
         if (observer) observer.disconnect();
         if (mutationObserver) mutationObserver.disconnect();
         if (frame) cancelAnimationFrame(frame);
-        clear();
+        release(padded);
+        padded = null;
       };
     }, [collapsed, hudWidth, pos && pos.x, pos && pos.y, rows.length, config.hud.enabled]);
     useLayoutEffectSafe(() => {

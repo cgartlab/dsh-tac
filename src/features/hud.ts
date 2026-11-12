@@ -731,29 +731,52 @@ export function FloatingStatus(props: FloatingStatusProps): unknown {
      Recompute on window resize and on the centre column's own size (panel/sidebar changes). */
   useLayoutEffectSafe(() => {
     const gap = 14;
+    /* The mutation observer below fires for every transcript change, and a streaming reply
+       re-renders the conversation constantly. Clearing and re-setting the padding on each
+       callback invalidated layout while the chat view was animating its own jump, which can
+       cancel that smooth scroll — the "the arrow sometimes stops short of the bottom" symptom.
+       Remember what is applied and only write style when the target node or the reserve
+       actually changes. */
     let padded: HTMLElement | null = null;
-    const clear = (): void => {
-      if (!padded) return;
-      padded.style.paddingLeft = '';
-      padded.style.paddingRight = '';
-      padded = null;
+    let paddedLeft = '';
+    let paddedRight = '';
+    const release = (node: HTMLElement | null): void => {
+      if (!node) return;
+      if (node.style.paddingLeft) node.style.paddingLeft = '';
+      if (node.style.paddingRight) node.style.paddingRight = '';
     };
     const apply = (): void => {
-      clear();
       const box = hudRef.current;
       const scroller = findChatScroller();
-      if (collapsed || !box || !scroller) return;
-      if (!isInsideCentreColumn(scroller)) return;
-      const rect = box.getBoundingClientRect();
-      const srect = scroller.getBoundingClientRect();
-      if (!srect.width) return;
-      const leftSide = rect.left + rect.width / 2 <= srect.left + srect.width / 2;
-      const reserve = leftSide ? Math.round(rect.right + gap - srect.left) : Math.round(srect.right - (rect.left - gap));
-      if (reserve <= 0) return;
-      if (srect.width - reserve < 360) return;
-      padded = scroller;
-      if (leftSide) scroller.style.paddingLeft = reserve + 'px';
-      else scroller.style.paddingRight = reserve + 'px';
+      let nextLeft = '';
+      let nextRight = '';
+      if (!collapsed && box && scroller && isInsideCentreColumn(scroller)) {
+        const rect = box.getBoundingClientRect();
+        const srect = scroller.getBoundingClientRect();
+        if (srect.width) {
+          const leftSide = rect.left + rect.width / 2 <= srect.left + srect.width / 2;
+          const reserve = leftSide ? Math.round(rect.right + gap - srect.left) : Math.round(srect.right - (rect.left - gap));
+          if (reserve > 0 && srect.width - reserve >= 360) {
+            if (leftSide) nextLeft = reserve + 'px';
+            else nextRight = reserve + 'px';
+          }
+        }
+      }
+      const target = nextLeft || nextRight ? scroller : null;
+      if (padded && padded !== target) {
+        release(padded);
+        padded = null;
+        paddedLeft = '';
+        paddedRight = '';
+      }
+      if (!target) return;
+      /* Idempotent: a no-op callback must not touch the style sheet at all. */
+      if (padded === target && paddedLeft === nextLeft && paddedRight === nextRight) return;
+      padded = target;
+      paddedLeft = nextLeft;
+      paddedRight = nextRight;
+      if (target.style.paddingLeft !== nextLeft) target.style.paddingLeft = nextLeft;
+      if (target.style.paddingRight !== nextRight) target.style.paddingRight = nextRight;
     };
     apply();
     let frame = 0;
@@ -789,7 +812,8 @@ export function FloatingStatus(props: FloatingStatusProps): unknown {
       if (observer) observer.disconnect();
       if (mutationObserver) mutationObserver.disconnect();
       if (frame) cancelAnimationFrame(frame);
-      clear();
+      release(padded);
+      padded = null;
     };
   }, [collapsed, hudWidth, pos && pos.x, pos && pos.y, rows.length, config.hud.enabled]);
   /* Fit the panel to the longest session title (bounded), so short lists do not waste width. */
