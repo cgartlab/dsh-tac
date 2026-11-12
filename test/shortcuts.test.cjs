@@ -4707,3 +4707,83 @@ test('grouping covers kind, preset, current session and update buckets', () => {
   pick('updated');
   assert.deepEqual(groupLabels(harness), [t('group.today'), t('group.thisWeek'), t('group.earlier')], 'update buckets climb from today through this week to earlier');
 });
+/* ------------------------------------------------- demo-path coverage: sort / batch / columns */
+
+test('clicking a column header sorts the session table and shift-click stacks a second sort', () => {
+  const harness = createHarness();
+  const board = mountBoardWith(harness);
+  openSessionsTable(harness, board);
+
+  const deepText = (node) => {
+    if (!node) return '';
+    if (typeof node.textContent === 'string' && node.textContent) return node.textContent;
+    return (node.children || []).map(deepText).join('');
+  };
+  const headers = () => harness.doc.querySelectorAll('.pbx-th');
+  const labelOf = deepText;
+  const byLabel = (label) => headers().find((th) => labelOf(th).indexOf(label) >= 0);
+  const firstTitle = () => {
+    const row = harness.doc.querySelectorAll('.pbx-tr')[0];
+    const cells = row.children;
+    return deepText(cells[1]);
+  };
+
+  const t = harness.ctx.locale.bind('projectBoard');
+  const titleHeader = byLabel(t('col.title'));
+  assert.ok(titleHeader, 'the title column is a sortable header');
+  titleHeader.props.onClick({ shiftKey: false });
+  board.render();
+  assert.equal(byLabel(t('col.title')).props['aria-sort'], 'ascending', 'a plain click sorts ascending first');
+  assert.equal(byLabel(t('col.updated')).props['aria-sort'], 'none', 'and replaces the previous sort');
+
+  byLabel(t('col.title')).props.onClick({ shiftKey: false });
+  board.render();
+  assert.equal(byLabel(t('col.title')).props['aria-sort'], 'descending', 'a second click flips the direction');
+  assert.equal(firstTitle(), 'Gamma', 'the rows follow the sort');
+
+  byLabel(t('col.status')).props.onClick({ shiftKey: true });
+  board.render();
+  const active = headers().filter((th) => th.props['aria-sort'] === 'ascending' || th.props['aria-sort'] === 'descending');
+  assert.equal(active.length, 2, 'shift-click keeps the first sort and adds the second');
+});
+
+test('more than 200 sessions render in batches with a working show-more control', () => {
+  const harness = createHarness();
+  const ids = Array.from({ length: 201 }, (_, index) => 's' + index);
+  const byId = {};
+  for (let index = 0; index < ids.length; index += 1) byId[ids[index]] = { id: ids[index], title: 'Session ' + index, updatedAt: 1000 + index };
+  const board = mountBoardWith(harness, {
+    useSessions: (selector) => selector({ ids, byId }),
+    useWorkspaces: (selector) => selector({ items: [{ workspaceId: 'w1', title: 'Workspace', sessionIds: ids }], archivedSessionIds: [] })
+  });
+  openSessionsTable(harness, board);
+
+  assert.equal(harness.doc.querySelectorAll('.pbx-tr').length, 200, 'the first batch is capped');
+  const cell = harness.doc.querySelector('.pbx-moreCell');
+  assert.ok(cell, 'the batch control is rendered');
+  const more = (cell.children || []).find((node) => node.tag === 'button');
+  assert.ok(more, 'the control is a button');
+  more.props.onClick({});
+  board.render();
+  assert.equal(harness.doc.querySelectorAll('.pbx-tr').length, 201, 'the rest of the list appears on request');
+  assert.equal(harness.doc.querySelectorAll('.pbx-moreCell').length, 0, 'and the control disappears');
+});
+
+test('a hidden project column disappears from the projects table', () => {
+  const harness = createHarness();
+  const before = harness.settingsStore.getSnapshot();
+  harness.settingsStore.set({
+    projectColumns: Object.assign({}, before.projectColumns, { issues: false })
+  });
+  const board = mountBoardWith(harness);
+  board.render();
+  const deepText = (node) => {
+    if (!node) return '';
+    if (typeof node.textContent === 'string' && node.textContent) return node.textContent;
+    return (node.children || []).map(deepText).join('');
+  };
+  const headers = harness.doc.querySelectorAll('.pbx-th');
+  const labels = headers.map(deepText);
+  assert.ok(labels.some((text) => text.indexOf('Open Issue') >= 0) === false, 'the hidden column is not rendered');
+  assert.ok(labels.some((text) => text.indexOf('Open PR') >= 0), 'the other columns stay');
+});
