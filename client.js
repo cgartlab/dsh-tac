@@ -1,4 +1,4 @@
-/*! dsh-tac 0.5.2 — generated from src/ by scripts/build.mjs; do not edit */
+/*! dsh-tac 0.6.0 — generated from src/ by scripts/build.mjs; do not edit */
 "use strict";
 (() => {
   // src/constants.ts
@@ -69,7 +69,7 @@
     },
     notify: { enabled: true, sound: true },
     log: { enabled: true, level: "info", max: 200 },
-    board: { enabled: true, wideThreshold: 520, defaultView: "projects" },
+    board: { enabled: true, wideThreshold: 520, defaultView: "projects", groupBy: "none" },
     chat: { autoHistory: true },
     projectColumnsVersion: 1,
     projectColumns: { total: true, issues: true, prs: true, localVersion: true, latestVersion: true, lastUpdated: true },
@@ -1884,7 +1884,20 @@
     "filter.status": "Status",
     "filter.project": "Project",
     "filter.search": "Search…",
-    "group.byProject": "Group by project",
+    "group.label": "Group",
+    "group.none": "No grouping",
+    "group.project": "Project",
+    "group.status": "Status",
+    "group.kind": "Kind",
+    "group.preset": "Preset",
+    "group.updated": "Updated",
+    "group.current": "Current session",
+    "group.today": "Today",
+    "group.yesterday": "Yesterday",
+    "group.thisWeek": "This week",
+    "group.earlier": "Earlier",
+    "group.currentYes": "Current session",
+    "group.currentNo": "Other sessions",
     "sort.hint": "{shift}+click a column to add a sort",
     "col.title": "Name",
     "col.project": "Project",
@@ -2071,6 +2084,7 @@
     "settings.boardEnabled": "Enable right-pane board tab",
     "settings.boardEnabledDesc": "Open the board in the right sidebar",
     "settings.boardThreshold": "Full-board width threshold (px)",
+    "settings.boardGroupBy": "Session grouping",
     "settings.boardView": "Default full-board view",
     "settings.projectColumns": "Project board · visible attributes",
     "settings.projectColumnsHint": "Choose which project attributes appear as columns; name and icon/color always show.",
@@ -2170,7 +2184,20 @@
     "filter.status": "状态",
     "filter.project": "项目",
     "filter.search": "搜索…",
-    "group.byProject": "按项目分组",
+    "group.label": "分组",
+    "group.none": "不分组",
+    "group.project": "项目",
+    "group.status": "状态",
+    "group.kind": "类型",
+    "group.preset": "预设",
+    "group.updated": "更新时间",
+    "group.current": "当前会话",
+    "group.today": "今天",
+    "group.yesterday": "昨天",
+    "group.thisWeek": "本周",
+    "group.earlier": "更早",
+    "group.currentYes": "当前会话",
+    "group.currentNo": "其他会话",
     "sort.hint": "{shift}+点击列头可叠加排序",
     "col.title": "名称",
     "col.project": "项目",
@@ -2357,6 +2384,7 @@
     "settings.boardEnabled": "启用右侧看板页签",
     "settings.boardEnabledDesc": "在右侧栏打开「项目看板」",
     "settings.boardThreshold": "完整看板宽度阈值（px）",
+    "settings.boardGroupBy": "会话列表分组",
     "settings.boardView": "完整看板默认视图",
     "settings.projectColumns": "项目看板 · 显示哪些项目属性",
     "settings.projectColumnsHint": "勾选要在项目表格里显示的项目属性；名称和图标/颜色始终显示。",
@@ -2907,7 +2935,12 @@
     const [kindFilter, setKindFilter] = useState("all");
     const [projectFilter, setProjectFilter] = useState("all");
     const [query, setQuery] = useState("");
-    const [grouped, setGrouped] = useState(false);
+    const groupBy = config.board && config.board.groupBy ? config.board.groupBy : "none";
+    const setGroupBy = (next) => {
+      const save = props.saveSettings;
+      if (typeof save !== "function") return;
+      save(mergeSettings(config, { board: Object.assign({}, config.board, { groupBy: next }) }));
+    };
     const [collapsed, setCollapsed] = useState({});
     const [compactProjectId, setCompactProjectId] = useState(null);
     const [popoverPos, setPopoverPos] = useState(null);
@@ -3316,19 +3349,55 @@
         )
       )
     );
-    const renderGroupHeader = (workspaceId, label, count) => {
-      const isCollapsed = collapsed[workspaceId] === true;
+    const renderGroupHeader = (groupId, label, count, workspaceId) => {
+      const isCollapsed = collapsed[groupId] === true;
       return h(
         "tr",
-        { key: "g-" + workspaceId, className: "pbx-groupRow" },
+        { key: "g-" + groupId, className: "pbx-groupRow" },
         h(
           "td",
-          { colSpan: 7, onClick: () => setCollapsed((prev) => Object.assign({}, prev, { [workspaceId]: !isCollapsed })) },
+          { colSpan: 7, onClick: () => setCollapsed((prev) => Object.assign({}, prev, { [groupId]: !isCollapsed })) },
           h("span", { className: "pbx-groupChevron" + (isCollapsed ? "" : " open") }, h(Icon, { name: "chevron", size: 13 })),
-          projectChip(workspaceId, label, "lg"),
+          workspaceId ? projectChip(workspaceId, label, "lg") : h("span", { className: "pbx-groupLabel" }, label),
           h("span", { className: "pbx-groupCount" }, t(count === 1 ? "count.row" : "count.rows", { n: count }))
         )
       );
+    };
+    const projectOrder = new Map(projectModels.map((project, index) => [project.workspaceId, index]));
+    const timeGroup = (updatedAt) => {
+      const now = /* @__PURE__ */ new Date();
+      const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+      const startOfYesterday = startOfToday - 864e5;
+      const mondayOffset = (now.getDay() + 6) % 7;
+      const startOfWeek = startOfToday - mondayOffset * 864e5;
+      const at = Number(updatedAt) || 0;
+      if (at >= startOfToday) return { id: "updated:today", label: t("group.today"), order: 0 };
+      if (at >= startOfYesterday) return { id: "updated:yesterday", label: t("group.yesterday"), order: 1 };
+      if (at >= startOfWeek) return { id: "updated:thisWeek", label: t("group.thisWeek"), order: 2 };
+      return { id: "updated:earlier", label: t("group.earlier"), order: 3 };
+    };
+    const groupOf = (session) => {
+      switch (groupBy) {
+        case "project":
+          return {
+            id: session.workspaceId,
+            label: session.workspaceLabel,
+            order: projectOrder.has(session.workspaceId) ? projectOrder.get(session.workspaceId) : 999,
+            workspaceId: session.workspaceId
+          };
+        case "status":
+          return { id: "status:" + session.info.labelKey, label: t(session.info.labelKey), order: 10 - session.info.rank };
+        case "kind":
+          return session.auto ? { id: "kind:auto", label: t("kind.auto"), order: 0 } : { id: "kind:normal", label: t("kind.normal"), order: 1 };
+        case "preset":
+          return { id: "preset:" + (session.preset || ""), label: presetText(session.preset), order: 0 };
+        case "updated":
+          return timeGroup(session.updatedAt);
+        case "current":
+          return session.current ? { id: "current:yes", label: t("group.currentYes"), order: 0 } : { id: "current:no", label: t("group.currentNo"), order: 1 };
+        default:
+          return { id: session.workspaceId, label: session.workspaceLabel, order: 0, workspaceId: session.workspaceId };
+      }
     };
     const renderSessionsBody = () => {
       if (filteredSessions.length === 0) {
@@ -3351,16 +3420,32 @@
           )
         )
       ) : null;
-      if (!grouped) {
+      if (groupBy === "none") {
         const rendered = shownSessions.map(renderSessionRow);
         return moreRow ? rendered.concat([moreRow]) : rendered;
       }
+      const groupCounts = /* @__PURE__ */ new Map();
+      for (const session of filteredSessions) {
+        const key = groupOf(session).id;
+        groupCounts.set(key, (groupCounts.get(key) || 0) + 1);
+      }
+      const groups = [];
+      const positionOf = /* @__PURE__ */ new Map();
+      for (const session of shownSessions) {
+        const info = groupOf(session);
+        const position = positionOf.get(info.id);
+        if (position === void 0) {
+          positionOf.set(info.id, groups.length);
+          groups.push({ id: info.id, label: info.label, order: info.order, workspaceId: info.workspaceId, rows: [session] });
+        } else {
+          groups[position].rows.push(session);
+        }
+      }
+      groups.sort((a, b) => a.order - b.order || (a.label < b.label ? -1 : a.label > b.label ? 1 : 0));
       const rows = [];
-      for (const project of projectModels) {
-        const groupRows = shownSessions.filter((s) => s.workspaceId === project.workspaceId);
-        if (groupRows.length === 0) continue;
-        rows.push(renderGroupHeader(project.workspaceId, project.name, filteredSessions.filter((s) => s.workspaceId === project.workspaceId).length));
-        if (collapsed[project.workspaceId] !== true) rows.push.apply(rows, groupRows.map(renderSessionRow));
+      for (const group of groups) {
+        rows.push(renderGroupHeader(group.id, group.label, groupCounts.get(group.id) || group.rows.length, group.workspaceId));
+        if (collapsed[group.id] !== true) rows.push.apply(rows, group.rows.map(renderSessionRow));
       }
       if (moreRow) rows.push(moreRow);
       return rows;
@@ -3654,7 +3739,22 @@
           h("option", { value: "all" }, t("filter.project") + ": " + t("filter.all")),
           projectModels.map((p) => h("option", { key: p.workspaceId, value: p.workspaceId }, p.name))
         ) : null,
-        view === "sessions" ? h("button", { type: "button", className: "pbx-toggle" + (grouped ? " on" : ""), onClick: () => setGrouped((v) => !v) }, t("group.byProject")) : null,
+        view === "sessions" ? h(
+          "select",
+          {
+            className: "pbx-select",
+            value: groupBy,
+            onChange: (e) => setGroupBy(e.target.value),
+            "aria-label": t("group.label")
+          },
+          h("option", { value: "none" }, t("group.label") + ": " + t("group.none")),
+          h("option", { value: "project" }, t("group.project")),
+          h("option", { value: "status" }, t("group.status")),
+          h("option", { value: "kind" }, t("group.kind")),
+          h("option", { value: "preset" }, t("group.preset")),
+          h("option", { value: "updated" }, t("group.updated")),
+          h("option", { value: "current" }, t("group.current"))
+        ) : null,
         h("span", { className: "pbx-sortHint" }, t("sort.hint", MODIFIER_LABELS))
       )
     );
@@ -6813,6 +6913,15 @@
           { value: "sessions", labelKey: "view.sessions" },
           { value: "projects", labelKey: "view.projects" }
         ], !boardOn()),
+        selectRow("board", "groupBy", "settings.boardGroupBy", [
+          { value: "none", labelKey: "group.none" },
+          { value: "project", labelKey: "group.project" },
+          { value: "status", labelKey: "group.status" },
+          { value: "kind", labelKey: "group.kind" },
+          { value: "preset", labelKey: "group.preset" },
+          { value: "updated", labelKey: "group.updated" },
+          { value: "current", labelKey: "group.current" }
+        ], !boardOn()),
         h("div", { className: "pbx-setSubTitle" }, t("settings.projectColumns")),
         PROJECT_COLUMNS.map((def) => toggleRow("projectColumns", def.key, def.labelKey, void 0, !boardOn())),
         h("div", { className: "pbx-setHint" }, t("settings.projectColumnsHint")),
@@ -7781,7 +7890,8 @@
       openBoard,
       openFullBoard,
       hooks: boardHooks(),
-      viewRequestStore: boardViewStores[surface]
+      viewRequestStore: boardViewStores[surface],
+      saveSettings: writeSettings
     });
     const sessionMenuStore = createUiStore({ sessionId: null, title: "", at: 0 });
     const requestSessionMenu = (sessionId, title) => {

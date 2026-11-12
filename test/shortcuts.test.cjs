@@ -4607,3 +4607,103 @@ test('repeated transcript mutations do not re-write the HUD gutter padding', () 
   harness.window.getComputedStyle = previousComputedStyle;
   harness.doc.__removeRoot(column);
 });
+/* --------------------------------------------------------- board grouping */
+
+function mountBoardWith(harness, overrides) {
+  const entry = harness.registrations.find((item) => item.spec.name === 'main');
+  assert.ok(entry, 'the main board is registered');
+  const injected = entry.spec.inject();
+  const props = Object.assign(
+    {},
+    injected,
+    {
+      useSessions: (selector) => selector(harness.sessions()),
+      useSessionStatus: (selector) => selector(new Map()),
+      useWorkspaces: (selector) =>
+        selector({ items: [{ workspaceId: 'w1', title: 'Workspace', sessionIds: ['s1', 's2', 's3'] }], archivedSessionIds: [] }),
+      useSettings: (selector) => selector(harness.settingsStore.getSnapshot()),
+      t: harness.ctx.locale.bind('projectBoard')
+    },
+    overrides || {}
+  );
+  const instance = harness.runtime.mount(entry.component, props, (node) => harness.doc.__setComponentRoot('board', node));
+  instance.render();
+  return instance;
+}
+
+function openSessionsTable(harness, board) {
+  const tabs = harness.doc.querySelectorAll('.pbx-tab');
+  assert.equal(tabs.length, 2, 'the board renders its two view tabs');
+  tabs[1].props.onClick({});
+  board.render();
+}
+
+function groupSelect(harness) {
+  const select = harness.doc.querySelectorAll('select').find((node) => node.getAttribute('aria-label') === 'Group');
+  assert.ok(select, 'the grouping select is rendered in the session toolbar');
+  return select;
+}
+
+function groupLabels(harness) {
+  const text = (node) => (node.children || []).map((child) => child.textContent || '').join('') || node.textContent || '';
+  return harness.doc.querySelectorAll('.pbx-groupLabel').map(text);
+}
+
+test('the board groups the session table by status and collapses a group', () => {
+  const harness = createHarness();
+  const board = mountBoardWith(harness, {
+    useSessionStatus: (selector) => selector(new Map([['s1', { running: true }]]))
+  });
+  openSessionsTable(harness, board);
+
+  assert.deepEqual(groupLabels(harness), [], 'without grouping the table stays flat');
+  const select = groupSelect(harness);
+  assert.equal(select.props.value, 'none', 'the default is the flat table');
+
+  select.props.onChange({ target: { value: 'status' } });
+  board.render();
+  assert.equal(harness.settingsStore.getSnapshot().board.groupBy, 'status', 'the choice is persisted in settings');
+  assert.deepEqual(groupLabels(harness), ['Running', 'Idle'], 'one header per distinct status, strongest first');
+
+  const headers = harness.doc.querySelectorAll('.pbx-groupRow');
+  assert.equal(headers.length, 2, 'both groups render a header');
+  const rowsBefore = harness.doc.querySelectorAll('.pbx-tr').length;
+  headers[0].children[0].props.onClick({});
+  board.render();
+  assert.equal(harness.doc.querySelectorAll('.pbx-tr').length, rowsBefore - 1, 'collapsing the first group hides exactly its row');
+});
+
+test('grouping covers kind, preset, current session and update buckets', () => {
+  const harness = createHarness();
+  const now = Date.now();
+  const sessions = {
+    ids: ['s1', 's2', 's3'],
+    byId: {
+      s1: { id: 's1', title: 'Alpha', updatedAt: now, running: true, projectionValues: { agentPreset: 'code' } },
+      s2: { id: 's2', title: 'Beta', updatedAt: now - 40 * 86400000, retainedBy: { mainView: 1 } },
+      s3: { id: 's3', title: 'Gamma', updatedAt: now - 2 * 86400000, projectionValues: { agentPreset: 'chat' } }
+    }
+  };
+  const board = mountBoardWith(harness, {
+    useSessions: (selector) => selector(sessions),
+    useSessionStatus: (selector) => selector(new Map())
+  });
+  openSessionsTable(harness, board);
+  const pick = (value) => {
+    groupSelect(harness).props.onChange({ target: { value } });
+    board.render();
+  };
+
+  const t = harness.ctx.locale.bind('projectBoard');
+  pick('kind');
+  assert.deepEqual(groupLabels(harness), [t('kind.normal')], 'all fixture sessions are ordinary sessions');
+
+  pick('preset');
+  assert.deepEqual(groupLabels(harness).sort(), [t('preset.none'), 'chat', 'code'].sort(), 'one group per preset');
+
+  pick('current');
+  assert.deepEqual(groupLabels(harness), [t('group.currentYes'), t('group.currentNo')], 'the current session stands apart');
+
+  pick('updated');
+  assert.deepEqual(groupLabels(harness), [t('group.today'), t('group.thisWeek'), t('group.earlier')], 'update buckets climb from today through this week to earlier');
+});

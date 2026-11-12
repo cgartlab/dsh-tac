@@ -21,7 +21,10 @@ reading, and desktop-class task notifications.
 
 - **Project board** — session and project database views with search, status/type/project
   filters, grouping, multi-column sorting, archive-aware rows, and per-project color and
-  icon. The project view has 6 attribute columns (session count / Open Issue / Open PR /
+  icon. The session table groups by **any session attribute** — project, status, kind
+  (automation vs. ordinary), agent preset, update bucket (today / yesterday / this week /
+  earlier) or current session — chosen from the toolbar select or the settings page and
+  remembered across reloads; each group header collapses independently. The project view has 6 attribute columns (session count / Open Issue / Open PR /
   local version / latest release / last activity). **Click a project row to expand its
   session list inline below** (accordion-style, no page flip). Opens at narrow (380 px),
   medium (50 vw) or native fullscreen — each size key is its own toggle: any of them closes an

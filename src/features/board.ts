@@ -14,6 +14,8 @@ import { MODIFIER_LABELS } from '../core/combos';
 import type { SessionListSnapshot, SessionStatusMap, SessionSummary, WorkspaceSnapshot, WorkspaceView } from '../core/snapshot';
 import { fallbackHook, type PresetSnapshot, type ScheduleSnapshot } from '../core/schedule';
 import { PROJECT_COLUMNS, SORT_DIR_DEFAULT, compareVersions, parseVersion, relTime, sessionTitleOf, statusInfo, workspaceLabel, type ProjectColumn, type SessionStatusLike, type StatusInfo } from './format';
+import { mergeSettings } from '../core/settings';
+import type { BoardGroupBy } from '../types';
 import { fetchRepoStats, type RepoStats } from '../core/github';
 import type { GithubRepoSetting } from '../types';
 
@@ -37,11 +39,21 @@ export interface ProjectBoardProps {
    *  it switches the view — reliable even when the component stays mounted, because a
    *  store `set()` produces a new snapshot that triggers the subscription. */
   viewRequestStore?: UiStore<{ seq: number; view: 'projects' | 'sessions' }>;
+  /** Persist a settings patch; the grouping select writes through so a pane remount keeps it. */
+  saveSettings?: (next: Settings) => void;
 }
 
 interface SortEntry {
   key: string;
   dir: 'asc' | 'desc';
+}
+
+/** One grouping bucket: identity, header label, sort order and (for project groups) the workspace. */
+interface GroupInfo {
+  id: string;
+  label: string;
+  order: number;
+  workspaceId?: string;
 }
 
 interface SessionRow {
@@ -190,7 +202,14 @@ export function ProjectBoard(props: ProjectBoardProps): unknown {
   const [kindFilter, setKindFilter] = useState('all');
   const [projectFilter, setProjectFilter] = useState('all');
   const [query, setQuery] = useState('');
-  const [grouped, setGrouped] = useState(false);
+  /* Grouping is a persisted preference: the toolbar select writes through to the settings
+     store so a session switch (which rebuilds the right pane) keeps the reader's choice. */
+  const groupBy = (config.board && config.board.groupBy ? config.board.groupBy : 'none') as BoardGroupBy;
+  const setGroupBy = (next: BoardGroupBy): void => {
+    const save = props.saveSettings;
+    if (typeof save !== 'function') return;
+    save(mergeSettings(config, { board: Object.assign({}, config.board, { groupBy: next }) }));
+  };
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [compactProjectId, setCompactProjectId] = useState<string | null>(null);
   const [popoverPos, setPopoverPos] = useState<PopoverPosition | null>(null);
@@ -654,19 +673,63 @@ export function ProjectBoard(props: ProjectBoardProps): unknown {
       )
     );
 
-  const renderGroupHeader = (workspaceId: string, label: string, count: number): unknown => {
-    const isCollapsed = collapsed[workspaceId] === true;
+  const renderGroupHeader = (groupId: string, label: string, count: number, workspaceId?: string): unknown => {
+    const isCollapsed = collapsed[groupId] === true;
     return h(
       'tr',
-      { key: 'g-' + workspaceId, className: 'pbx-groupRow' },
+      { key: 'g-' + groupId, className: 'pbx-groupRow' },
       h(
         'td',
-        { colSpan: 7, onClick: () => setCollapsed((prev) => Object.assign({}, prev, { [workspaceId]: !isCollapsed })) },
+        { colSpan: 7, onClick: () => setCollapsed((prev) => Object.assign({}, prev, { [groupId]: !isCollapsed })) },
         h('span', { className: 'pbx-groupChevron' + (isCollapsed ? '' : ' open') }, h(Icon, { name: 'chevron', size: 13 })),
-        projectChip(workspaceId, label, 'lg'),
+        workspaceId ? projectChip(workspaceId, label, 'lg') : h('span', { className: 'pbx-groupLabel' }, label),
         h('span', { className: 'pbx-groupCount' }, t(count === 1 ? 'count.row' : 'count.rows', { n: count }))
       )
     );
+  };
+
+  /* One row per distinct value of the chosen attribute. `order` decides the group order and
+     `label` is what the header shows; project groups keep their workspace id as the group id so
+     the existing collapse memory keeps working. */
+  const projectOrder = new Map(projectModels.map((project, index) => [project.workspaceId, index]));
+  const timeGroup = (updatedAt: number): GroupInfo => {
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const startOfYesterday = startOfToday - 86400000;
+    const mondayOffset = (now.getDay() + 6) % 7;
+    const startOfWeek = startOfToday - mondayOffset * 86400000;
+    const at = Number(updatedAt) || 0;
+    if (at >= startOfToday) return { id: 'updated:today', label: t('group.today'), order: 0 };
+    if (at >= startOfYesterday) return { id: 'updated:yesterday', label: t('group.yesterday'), order: 1 };
+    if (at >= startOfWeek) return { id: 'updated:thisWeek', label: t('group.thisWeek'), order: 2 };
+    return { id: 'updated:earlier', label: t('group.earlier'), order: 3 };
+  };
+  const groupOf = (session: SessionRow): GroupInfo => {
+    switch (groupBy) {
+      case 'project':
+        return {
+          id: session.workspaceId,
+          label: session.workspaceLabel,
+          order: projectOrder.has(session.workspaceId) ? (projectOrder.get(session.workspaceId) as number) : 999,
+          workspaceId: session.workspaceId
+        };
+      case 'status':
+        return { id: 'status:' + session.info.labelKey, label: t(session.info.labelKey), order: 10 - session.info.rank };
+      case 'kind':
+        return session.auto
+          ? { id: 'kind:auto', label: t('kind.auto'), order: 0 }
+          : { id: 'kind:normal', label: t('kind.normal'), order: 1 };
+      case 'preset':
+        return { id: 'preset:' + (session.preset || ''), label: presetText(session.preset), order: 0 };
+      case 'updated':
+        return timeGroup(session.updatedAt);
+      case 'current':
+        return session.current
+          ? { id: 'current:yes', label: t('group.currentYes'), order: 0 }
+          : { id: 'current:no', label: t('group.currentNo'), order: 1 };
+      default:
+        return { id: session.workspaceId, label: session.workspaceLabel, order: 0, workspaceId: session.workspaceId };
+    }
   };
 
   const renderSessionsBody = (): unknown => {
@@ -693,16 +756,34 @@ export function ProjectBoard(props: ProjectBoardProps): unknown {
             )
           )
         : null;
-    if (!grouped) {
+    if (groupBy === 'none') {
       const rendered = shownSessions.map(renderSessionRow);
       return moreRow ? rendered.concat([moreRow]) : rendered;
     }
+    /* Counts describe the filtered set (what the reader can see), while rows are the rendered
+       subset — the "show more" batch must not make a group's header claim a smaller count. */
+    const groupCounts = new Map<string, number>();
+    for (const session of filteredSessions) {
+      const key = groupOf(session).id;
+      groupCounts.set(key, (groupCounts.get(key) || 0) + 1);
+    }
+    const groups: Array<GroupInfo & { rows: SessionRow[] }> = [];
+    const positionOf = new Map<string, number>();
+    for (const session of shownSessions) {
+      const info = groupOf(session);
+      const position = positionOf.get(info.id);
+      if (position === undefined) {
+        positionOf.set(info.id, groups.length);
+        groups.push({ id: info.id, label: info.label, order: info.order, workspaceId: info.workspaceId, rows: [session] });
+      } else {
+        groups[position].rows.push(session);
+      }
+    }
+    groups.sort((a, b) => a.order - b.order || (a.label < b.label ? -1 : a.label > b.label ? 1 : 0));
     const rows: unknown[] = [];
-    for (const project of projectModels) {
-      const groupRows = shownSessions.filter((s) => s.workspaceId === project.workspaceId);
-      if (groupRows.length === 0) continue;
-      rows.push(renderGroupHeader(project.workspaceId, project.name, filteredSessions.filter((s) => s.workspaceId === project.workspaceId).length));
-      if (collapsed[project.workspaceId] !== true) rows.push.apply(rows, groupRows.map(renderSessionRow));
+    for (const group of groups) {
+      rows.push(renderGroupHeader(group.id, group.label, groupCounts.get(group.id) || group.rows.length, group.workspaceId));
+      if (collapsed[group.id] !== true) rows.push.apply(rows, group.rows.map(renderSessionRow));
     }
     if (moreRow) rows.push(moreRow);
     return rows;
@@ -1016,7 +1097,22 @@ export function ProjectBoard(props: ProjectBoardProps): unknown {
           )
         : null,
       view === 'sessions'
-        ? h('button', { type: 'button', className: 'pbx-toggle' + (grouped ? ' on' : ''), onClick: () => setGrouped((v) => !v) }, t('group.byProject'))
+        ? h(
+            'select',
+            {
+              className: 'pbx-select',
+              value: groupBy,
+              onChange: (e: Event) => setGroupBy((e.target as HTMLSelectElement).value as BoardGroupBy),
+              'aria-label': t('group.label')
+            },
+            h('option', { value: 'none' }, t('group.label') + ': ' + t('group.none')),
+            h('option', { value: 'project' }, t('group.project')),
+            h('option', { value: 'status' }, t('group.status')),
+            h('option', { value: 'kind' }, t('group.kind')),
+            h('option', { value: 'preset' }, t('group.preset')),
+            h('option', { value: 'updated' }, t('group.updated')),
+            h('option', { value: 'current' }, t('group.current'))
+          )
         : null,
       h('span', { className: 'pbx-sortHint' }, t('sort.hint', MODIFIER_LABELS))
     )

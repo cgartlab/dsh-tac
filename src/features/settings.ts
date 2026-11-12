@@ -663,6 +663,15 @@ export function SettingsPage(props: SettingsPageProps): unknown {
         { value: 'sessions', labelKey: 'view.sessions' },
         { value: 'projects', labelKey: 'view.projects' }
       ], !boardOn()),
+      selectRow('board', 'groupBy', 'settings.boardGroupBy', [
+        { value: 'none', labelKey: 'group.none' },
+        { value: 'project', labelKey: 'group.project' },
+        { value: 'status', labelKey: 'group.status' },
+        { value: 'kind', labelKey: 'group.kind' },
+        { value: 'preset', labelKey: 'group.preset' },
+        { value: 'updated', labelKey: 'group.updated' },
+        { value: 'current', labelKey: 'group.current' }
+      ], !boardOn()),
       h('div', { className: 'pbx-setSubTitle' }, t('settings.projectColumns')),
       PROJECT_COLUMNS.map((def) => toggleRow('projectColumns', def.key, def.labelKey, undefined, !boardOn())),
       h('div', { className: 'pbx-setHint' }, t('settings.projectColumnsHint')),

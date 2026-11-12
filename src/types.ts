@@ -72,10 +72,15 @@ export interface NotifySettings {
   sound: boolean;
 }
 
+/** What the session table groups its rows by. `none` keeps the flat table. */
+export type BoardGroupBy = 'none' | 'project' | 'status' | 'kind' | 'preset' | 'updated' | 'current';
+
 export interface BoardSettings {
   enabled: boolean;
   wideThreshold: number;
   defaultView: string;
+  /** Persisted so the grouping the reader picked survives a pane remount. */
+  groupBy: BoardGroupBy;
 }
 
 export interface ProjectColumnsSettings {

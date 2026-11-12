@@ -701,7 +701,8 @@ export function apply(ctx: HostContext): void {
     openBoard: openBoard,
     openFullBoard: openFullBoard,
     hooks: boardHooks(),
-    viewRequestStore: boardViewStores[surface]
+    viewRequestStore: boardViewStores[surface],
+    saveSettings: writeSettings
   });
 
   const sessionMenuStore = createUiStore<{ sessionId: string | null; title: string; at: number }>({ sessionId: null, title: '', at: 0 });

@@ -15,13 +15,13 @@
     },
     {
       "path": "docs/screenshots/hud.png",
-      "showsVersion": "0.5.2",
+      "showsVersion": "0.6.0",
       "capturedAt": "2026-11-10",
       "sha256": "970397585528031a2877f7a650725421c3f38588cda8eb70ea8a90eb4b513cde",
       "sources": [
         "src/features/hud.ts"
       ],
-      "verifiedThrough": "c2c93b5"
+      "verifiedThrough": "422a375"
     },
     {
       "path": "docs/screenshots/palette.png",
@@ -35,6 +35,10 @@
     }
   ],
   "acknowledgedStale": [
+    {
+      "path": "docs/screenshots/board.png",
+      "reason": "The session toolbar gained the grouping select in 0.6.0, so the pictured toolbar is out of date; re-capture together with palette.png from a running 0.6.0 build."
+    },
     {
       "path": "docs/screenshots/palette.png",
       "reason": "Predates the 0.5.0 archived-only chip (and the 0.5.1 restore hint); needs a re-capture from a session running 0.5.1+ so the 只看已归档 chip is visible next to the project chips."

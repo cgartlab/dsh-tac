@@ -72,7 +72,7 @@ export const DEFAULT_SETTINGS: Settings = {
   },
   notify: { enabled: true, sound: true },
   log: { enabled: true, level: 'info', max: 200 },
-  board: { enabled: true, wideThreshold: 520, defaultView: 'projects' },
+  board: { enabled: true, wideThreshold: 520, defaultView: 'projects', groupBy: 'none' },
   chat: { autoHistory: true },
   projectColumnsVersion: 1,
   projectColumns: { total: true, issues: true, prs: true, localVersion: true, latestVersion: true, lastUpdated: true },
