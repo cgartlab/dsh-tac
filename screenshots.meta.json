@@ -3,45 +3,36 @@
   "images": [
     {
       "path": "docs/screenshots/board.png",
-      "showsVersion": "0.5.2",
-      "capturedAt": "2026-11-10",
-      "sha256": "5e7b23928f57a6b4135142aa450eb51132c490fb438e214f9df35300d4d8e644",
+      "showsVersion": "0.6.0",
+      "capturedAt": "2026-11-12",
+      "sha256": "4866d936b9716033703b52fb1ecc51fe6cb17dbd1ca5c7af4a62a454ec38fcf5",
       "sources": [
         "src/features/board.ts",
         "src/features/responsive-board.ts",
         "src/features/header.ts"
       ],
-      "verifiedThrough": "c2c93b5"
+      "verifiedThrough": "2bef7d4"
     },
     {
       "path": "docs/screenshots/hud.png",
       "showsVersion": "0.6.0",
-      "capturedAt": "2026-11-10",
-      "sha256": "970397585528031a2877f7a650725421c3f38588cda8eb70ea8a90eb4b513cde",
+      "capturedAt": "2026-11-12",
+      "sha256": "c8b7451edc8eee52018f4ebac5b35c169b6990f23e6399595991fa52d4b5bec6",
       "sources": [
         "src/features/hud.ts"
       ],
-      "verifiedThrough": "422a375"
+      "verifiedThrough": "2bef7d4"
     },
     {
       "path": "docs/screenshots/palette.png",
-      "showsVersion": "0.4.3",
-      "capturedAt": "2026-11-10",
-      "sha256": "6a12b889026947338981e9cc6ba30a27ac557bb09f0e4d8d57d8436c3f740377",
+      "showsVersion": "0.6.0",
+      "capturedAt": "2026-11-12",
+      "sha256": "59c84c8f76a96ed2d71876ba7272fb98b8861b3432f89eabe25285f06eb5dd2e",
       "sources": [
         "src/features/palette.ts"
       ],
-      "verifiedThrough": "7bd5a07"
+      "verifiedThrough": "2bef7d4"
     }
   ],
-  "acknowledgedStale": [
-    {
-      "path": "docs/screenshots/board.png",
-      "reason": "The session toolbar gained the grouping select in 0.6.0, so the pictured toolbar is out of date; re-capture together with palette.png from a running 0.6.0 build."
-    },
-    {
-      "path": "docs/screenshots/palette.png",
-      "reason": "Predates the 0.5.0 archived-only chip (and the 0.5.1 restore hint); needs a re-capture from a session running 0.5.1+ so the 只看已归档 chip is visible next to the project chips."
-    }
-  ]
+  "acknowledgedStale": []
 }
