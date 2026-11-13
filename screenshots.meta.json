@@ -11,7 +11,7 @@
         "src/features/responsive-board.ts",
         "src/features/header.ts"
       ],
-      "verifiedThrough": "2bef7d4"
+      "verifiedThrough": "c1333a9"
     },
     {
       "path": "docs/screenshots/hud.png",
@@ -21,7 +21,7 @@
       "sources": [
         "src/features/hud.ts"
       ],
-      "verifiedThrough": "2bef7d4"
+      "verifiedThrough": "c1333a9"
     },
     {
       "path": "docs/screenshots/palette.png",
@@ -31,7 +31,7 @@
       "sources": [
         "src/features/palette.ts"
       ],
-      "verifiedThrough": "2bef7d4"
+      "verifiedThrough": "c1333a9"
     }
   ],
   "acknowledgedStale": []
