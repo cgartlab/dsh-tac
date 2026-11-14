@@ -14,6 +14,28 @@ export interface ScheduleSnapshot {
   activeSessionIds: Set<string>;
 }
 
+/**
+ * One task from `remote.schedule.catalog()`.
+ *
+ * DSH 0.2.2-rc.3 replaced the flat `sessionId` with a `target` union
+ * (`{kind:'session'|'new_once'|'new', sessionId?}`); a `new` target creates a fresh Session
+ * per delivery and owns none. Hosts before that release (and the migration path inside the
+ * newer one) still carry the flat field, so both shapes are read.
+ */
+export interface ScheduleRecord {
+  status?: string;
+  sessionId?: string;
+  target?: ({ kind?: string; sessionId?: string } & Record<string, unknown>) | null;
+}
+
+/** The Session a task delivers to, or undefined when it owns no fixed Session. */
+export function scheduleSessionId(record: ScheduleRecord): string | undefined {
+  if (typeof record.sessionId === 'string' && record.sessionId) return record.sessionId;
+  const target = record.target;
+  if (target && typeof target.sessionId === 'string' && target.sessionId) return target.sessionId;
+  return undefined;
+}
+
 export interface PresetSnapshot {
   status: 'loading' | 'ready' | 'error';
   names: Record<string, string>;
@@ -63,7 +85,9 @@ export function createScheduleSource(ctx: HostContext): { source: ObservableSnap
       if (result && result.ok) {
         const active = new Set<string>();
         for (const record of result.value || []) {
-          if (record && record.status === 'active' && typeof record.sessionId === 'string') active.add(record.sessionId);
+          if (!record || record.status !== 'active') continue;
+          const sessionId = scheduleSessionId(record);
+          if (sessionId) active.add(sessionId);
         }
         publish({ status: 'ready', activeSessionIds: active });
       } else {

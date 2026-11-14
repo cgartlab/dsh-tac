@@ -1,4 +1,4 @@
-/*! dsh-tac 0.6.0 — generated from src/ by scripts/build.mjs; do not edit */
+/*! dsh-tac 0.6.1 — generated from src/ by scripts/build.mjs; do not edit */
 "use strict";
 (() => {
   // src/constants.ts
@@ -321,6 +321,12 @@
   }
 
   // src/core/schedule.ts
+  function scheduleSessionId(record) {
+    if (typeof record.sessionId === "string" && record.sessionId) return record.sessionId;
+    const target = record.target;
+    if (target && typeof target.sessionId === "string" && target.sessionId) return target.sessionId;
+    return void 0;
+  }
   var NO_AUTO = /* @__PURE__ */ new Set();
   function observable(initial) {
     let snapshot = initial;
@@ -358,7 +364,9 @@
         if (result && result.ok) {
           const active = /* @__PURE__ */ new Set();
           for (const record of result.value || []) {
-            if (record && record.status === "active" && typeof record.sessionId === "string") active.add(record.sessionId);
+            if (!record || record.status !== "active") continue;
+            const sessionId = scheduleSessionId(record);
+            if (sessionId) active.add(sessionId);
           }
           publish({ status: "ready", activeSessionIds: active });
         } else {
@@ -7595,12 +7603,48 @@
       try {
         const sidebarRight = ctx.sidebarRight;
         if (!sidebarRight) return;
-        if (boardPanelVisible() && rightBoardActive()) sidebarRight.toggleExpanded();
+        if (boardPanelVisible() && rightBoardActive()) closeDockBoard();
       } catch (error) {
       }
     };
     const boardPanelVisible = () => isRightPanelExpanded();
     const rightbarWidthNow = () => hostRightbarWidth();
+    const showRightPane = () => {
+      try {
+        const layout = ctx.layout;
+        if (layout && typeof layout.openRightbar === "function") {
+          layout.openRightbar(true, false);
+          return true;
+        }
+      } catch (error) {
+      }
+      return false;
+    };
+    const hideRightPane = () => {
+      try {
+        const layout = ctx.layout;
+        if (layout && typeof layout.closeRightbar === "function") {
+          layout.closeRightbar();
+          return true;
+        }
+      } catch (error) {
+      }
+      return false;
+    };
+    const openDockBoard = () => {
+      const sidebarRight = ctx.sidebarRight;
+      if (!sidebarRight) return;
+      if (!rightBoardActive()) sidebarRight.openTab(BOARD_KIND);
+      if (boardPanelVisible()) return;
+      if (!showRightPane() && typeof sidebarRight.toggleExpanded === "function") sidebarRight.toggleExpanded();
+    };
+    const closeDockBoard = () => {
+      if (!boardPanelVisible()) return;
+      if (!hideRightPane()) {
+        const sidebarRight = ctx.sidebarRight;
+        if (sidebarRight && typeof sidebarRight.toggleExpanded === "function") sidebarRight.toggleExpanded();
+      }
+    };
     const BOARD_NARROW_WIDTH = 380;
     const BOARD_NARROW_MAX = 460;
     const boardWidthDefault = () => {
@@ -7680,11 +7724,10 @@
         const sidebarRight = ctx.sidebarRight;
         if (!sidebarRight) return;
         if (want) {
-          if (!rightBoardActive()) sidebarRight.openTab(BOARD_KIND);
-          if (!boardPanelVisible()) sidebarRight.toggleExpanded();
+          openDockBoard();
           return;
         }
-        if (boardPanelVisible()) sidebarRight.toggleExpanded();
+        closeDockBoard();
       } catch (error) {
       }
     };
@@ -7735,8 +7778,7 @@
           setBoardOpen(false);
           return;
         }
-        if (!rightBoardActive()) sidebarRight.openTab(BOARD_KIND);
-        if (!boardPanelVisible()) sidebarRight.toggleExpanded();
+        openDockBoard();
         const mode = want.mode === "narrow" || want.mode === "full" ? want.mode : "half";
         if (mode === "full") {
           if (!rightbarFullscreen()) toggleRightbarFullscreen();
@@ -7757,8 +7799,7 @@
       try {
         const sidebarRight = ctx.sidebarRight;
         if (!sidebarRight) return;
-        if (!rightBoardActive()) sidebarRight.openTab(BOARD_KIND);
-        if (!boardPanelVisible()) sidebarRight.toggleExpanded();
+        openDockBoard();
         if (mode === "full") {
           if (!rightbarFullscreen()) toggleRightbarFullscreen();
           return;
@@ -7823,7 +7864,7 @@
         const expanded = boardPanelVisible();
         if (visible && expanded) {
           if (rightbarFullscreen()) toggleRightbarFullscreen();
-          sidebarRight.toggleExpanded();
+          closeDockBoard();
           return;
         }
         showNativeBoard(mode, !expanded);
@@ -7840,9 +7881,9 @@
           logEvent("info", "board", "open-disabled", {});
           return;
         }
-        sidebarRight.openTab(BOARD_KIND);
-        if (!boardPanelVisible()) {
-          sidebarRight.toggleExpanded();
+        const wasVisible = boardPanelVisible();
+        openDockBoard();
+        if (!wasVisible) {
           const width = boardWidthDefault();
           cancelLater(boardWidthFollowUp);
           boardWidthFollowUp = later(() => {

@@ -335,7 +335,7 @@ export function apply(ctx: HostContext): void {
       if (!sidebarRight) return;
       /* LESSONS: isExpanded() is unreliable (a build could leave Alt+N/B/V open-only).
          Decide visibility from the DOM panel marker + the active panel kind instead. */
-      if (boardPanelVisible() && rightBoardActive()) sidebarRight.toggleExpanded();
+      if (boardPanelVisible() && rightBoardActive()) closeDockBoard();
     } catch (error) {
       /* ignore */
     }
@@ -344,6 +344,55 @@ export function apply(ctx: HostContext): void {
      in one place; these aliases keep the call sites reading naturally. */
   const boardPanelVisible = (): boolean => isRightPanelExpanded();
   const rightbarWidthNow = (): number => hostRightbarWidth();
+  /**
+   * Show/hide the frame's right sidebar.
+   *
+   * DSH 0.2.2-rc.3 moved "is there a right sidebar" out of the dock and onto the frame
+   * (`layout.openRightbar(track, fullscreen)` / `layout.closeRightbar()`). Calling only
+   * `sidebarRight.toggleExpanded()` there flips the dock panel's flag while the frame column
+   * stays at width 0, so every open looked like a no-op. Newer hosts therefore go through the
+   * frame API first; older builds keep the dock call as the fallback.
+   */
+  const showRightPane = (): boolean => {
+    try {
+      const layout = ctx.layout;
+      if (layout && typeof layout.openRightbar === 'function') {
+        layout.openRightbar(true, false);
+        return true;
+      }
+    } catch (error) {
+      /* ignore */
+    }
+    return false;
+  };
+  const hideRightPane = (): boolean => {
+    try {
+      const layout = ctx.layout;
+      if (layout && typeof layout.closeRightbar === 'function') {
+        layout.closeRightbar();
+        return true;
+      }
+    } catch (error) {
+      /* ignore */
+    }
+    return false;
+  };
+  /** Open the docked board: place/activate its tab, then make the frame column appear. */
+  const openDockBoard = (): void => {
+    const sidebarRight = ctx.sidebarRight;
+    if (!sidebarRight) return;
+    if (!rightBoardActive()) sidebarRight.openTab(BOARD_KIND);
+    if (boardPanelVisible()) return;
+    if (!showRightPane() && typeof sidebarRight.toggleExpanded === 'function') sidebarRight.toggleExpanded();
+  };
+  /** Hide the docked board, preferring the frame API so the column itself collapses. */
+  const closeDockBoard = (): void => {
+    if (!boardPanelVisible()) return;
+    if (!hideRightPane()) {
+      const sidebarRight = ctx.sidebarRight;
+      if (sidebarRight && typeof sidebarRight.toggleExpanded === 'function') sidebarRight.toggleExpanded();
+    }
+  };
   /* Alt+N asks for "the narrow board", so narrow is a FIXED width, not the width the user
      last dragged. `boardStateNow()` classifies a pane by measured width (below `BOARD_NARROW_MAX`
      is narrow), so a restored 600px "narrow" pane reads as half: the next Alt+N then saw a
@@ -435,11 +484,10 @@ export function apply(ctx: HostContext): void {
       const sidebarRight = ctx.sidebarRight;
       if (!sidebarRight) return;
       if (want) {
-        if (!rightBoardActive()) sidebarRight.openTab(BOARD_KIND);
-        if (!boardPanelVisible()) sidebarRight.toggleExpanded();
+        openDockBoard();
         return;
       }
-      if (boardPanelVisible()) sidebarRight.toggleExpanded();
+      closeDockBoard();
     } catch (error) {
       /* ignore */
     }
@@ -511,8 +559,7 @@ export function apply(ctx: HostContext): void {
         setBoardOpen(false);
         return;
       }
-      if (!rightBoardActive()) sidebarRight.openTab(BOARD_KIND);
-      if (!boardPanelVisible()) sidebarRight.toggleExpanded();
+      openDockBoard();
       const mode = want.mode === 'narrow' || want.mode === 'full' ? want.mode : 'half';
       if (mode === 'full') {
         if (!rightbarFullscreen()) toggleRightbarFullscreen();
@@ -542,8 +589,7 @@ export function apply(ctx: HostContext): void {
     try {
       const sidebarRight = ctx.sidebarRight;
       if (!sidebarRight) return;
-      if (!rightBoardActive()) sidebarRight.openTab(BOARD_KIND);
-      if (!boardPanelVisible()) sidebarRight.toggleExpanded();
+      openDockBoard();
       if (mode === 'full') {
         if (!rightbarFullscreen()) toggleRightbarFullscreen();
         return;
@@ -625,7 +671,7 @@ export function apply(ctx: HostContext): void {
         /* Leave the fullscreen presentation first for the same reason Alt+W does: collapsing a
            fullscreen right bar can otherwise leave it covering the page. */
         if (rightbarFullscreen()) toggleRightbarFullscreen();
-        sidebarRight.toggleExpanded();
+        closeDockBoard();
         return;
       }
       showNativeBoard(mode, !expanded);
@@ -645,9 +691,9 @@ export function apply(ctx: HostContext): void {
         logEvent('info', 'board', 'open-disabled', {});
         return;
       }
-      sidebarRight.openTab(BOARD_KIND);
-      if (!boardPanelVisible()) {
-        sidebarRight.toggleExpanded();
+      const wasVisible = boardPanelVisible();
+      openDockBoard();
+      if (!wasVisible) {
         const width = boardWidthDefault();
         cancelLater(boardWidthFollowUp);
         boardWidthFollowUp = later(() => {

@@ -116,9 +116,12 @@ scroll-to-bottom, session cycle) stand down so typing is never interrupted.
   `dsh-client-ui-sidebar`, `dsh-client-ui-workspace`, and `dsh-client-ui-session`.
 - Node.js 18+ only for repository checks; the plugin itself is loaded by the harness.
 
-**Verified against**: DSH `0.2.2-rc.1` (desktop app on macOS / Windows, and the web UI).
-DSH is in developer preview; the plugin only uses public client services, but an upstream
-breaking change may still need a follow-up release — please include your DSH version in issues.
+**Verified against**: DSH `0.2.2-rc.3` (desktop app on macOS / Windows, and the web UI).
+0.6.1 adapts to rc.3's frame-level right sidebar (`layout.openRightbar` / `closeRightbar`) and
+its schedule records (`target.sessionId`); both older and newer shapes are read, so rc.1 hosts
+keep working through the fallback paths. DSH is in developer preview; the plugin only uses
+public client services, but an upstream breaking change may still need a follow-up release —
+please include your DSH version in issues.
 
 ## Install
 

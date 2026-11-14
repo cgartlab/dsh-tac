@@ -45,6 +45,14 @@ export interface HostSidebarRight {
 export interface HostLayout {
   selectPanel(panelId: string | null): void;
   toggleSidebar?: () => void;
+  /**
+   * DSH 0.2.2-rc.3+ frame-level right sidebar: `track` reserves a resizable grid column and
+   * `fullscreen` overlays the frame. On those builds the dock's `toggleExpanded()` alone only
+   * flips the panel's own flag, so the column never appears. Older hosts expose neither method
+   * and are driven through `sidebarRight` instead.
+   */
+  openRightbar?: (track: boolean, fullscreen: boolean) => void;
+  closeRightbar?: () => void;
   panels?: { toggleSidebar?: () => void; setRightbar?: (px: number) => void };
 }
 

@@ -648,6 +648,8 @@ function createServices() {
     openSession: [],
     sidebarOpenTab: [],
     sidebarToggleExpanded: [],
+    openRightbar: [],
+    closeRightbar: [],
     layoutToggleSidebar: [],
     setRightbar: [],
     archive: [],
@@ -715,6 +717,7 @@ function createContext(doc, services) {
       }
     },
     layout: services.layout,
+    remote: services.remote,
     uiWorkspace: services.uiWorkspace
   };
   return { ctx, translations, registrations, effects };
@@ -1983,7 +1986,7 @@ test('auto-repeat and IME composition never trigger a shortcut', () => {
  * changes the measured column width and `toggleFullscreen` toggles the fullscreen marker.
  * The plugin reads that same markup, so the three-state board logic can be exercised end to end.
  */
-function connectBoardPane(harness) {
+function connectBoardPane(harness, options) {
   const state = { kind: null, expanded: false, fullscreen: false, width: 0 };
   const panel = new VirtualNode('div', { class: '_panel' }, [], harness.doc);
   const column = new VirtualNode('div', { 'data-rightbar-col': '' }, [], harness.doc);
@@ -2023,6 +2026,23 @@ function connectBoardPane(harness) {
     state.width = px;
     harness.services.calls.setRightbar.push(px);
   };
+  /* DSH 0.2.2-rc.3 moved the right sidebar onto the frame: the column is shown/hidden by
+     `openRightbar(track, fullscreen)` / `closeRightbar()`, and the dock flag alone leaves it
+     at width 0. A `frame` harness mirrors that host; a plain harness keeps the older
+     dock-only shape so both builds stay covered. */
+  if (options && options.frame) {
+    harness.services.layout.openRightbar = (track, fullscreen) => {
+      harness.services.calls.openRightbar.push([track, fullscreen]);
+      state.expanded = true;
+      if (!state.width) state.width = 380;
+      sync();
+    };
+    harness.services.layout.closeRightbar = () => {
+      harness.services.calls.closeRightbar.push(true);
+      state.expanded = false;
+      sync();
+    };
+  }
   return state;
 }
 
@@ -4786,4 +4806,74 @@ test('a hidden project column disappears from the projects table', () => {
   const labels = headers.map(deepText);
   assert.ok(labels.some((text) => text.indexOf('Open Issue') >= 0) === false, 'the hidden column is not rendered');
   assert.ok(labels.some((text) => text.indexOf('Open PR') >= 0), 'the other columns stay');
+});
+
+test('a frame-mode host opens and closes the board through openRightbar/closeRightbar', () => {
+  const harness = createHarness();
+  const state = connectBoardPane(harness, { frame: true });
+  harness.resetState();
+  harness.clearSpies();
+
+  harness.pressCombo('alt+KeyN');
+  assert.equal(harness.services.calls.openRightbar.length, 1, 'the frame column is opened');
+  assert.deepEqual(harness.services.calls.openRightbar[0], [true, false], 'a docked, non-fullscreen column is requested');
+  assert.equal(state.kind, BOARD_KIND, 'the board tab is placed');
+  assert.equal(state.expanded, true, 'the pane is expanded');
+  assert.ok(harness.services.calls.setRightbar.indexOf(380) >= 0, 'the narrow width is applied');
+
+  harness.pressCombo('alt+KeyN');
+  assert.equal(harness.services.calls.closeRightbar.length, 1, 'the frame column is closed');
+  assert.equal(state.expanded, false, 'the pane is collapsed');
+  assert.equal(harness.services.calls.sidebarToggleExpanded.length, 0, 'the dock toggle is not needed on a frame host');
+});
+
+test('a dock-only host still opens the board through sidebarRight.toggleExpanded', () => {
+  const harness = createHarness();
+  const state = connectBoardPane(harness);
+  harness.resetState();
+  harness.clearSpies();
+
+  harness.pressCombo('alt+KeyN');
+  assert.equal(harness.services.calls.openRightbar.length, 0, 'no frame API on the older host');
+  assert.equal(state.kind, BOARD_KIND);
+  assert.equal(state.expanded, true);
+  assert.equal(harness.services.calls.sidebarToggleExpanded.length, 1, 'the dock toggle is the fallback');
+});
+
+test('a DSH 0.2.2-rc.3 schedule record marks its target Session as an automation Session', async () => {
+  const harness = createHarness({
+    services: {
+      remote: {
+        schedule: {
+          catalog: async () => ({
+            ok: true,
+            value: [
+              { id: 't1', status: 'active', target: { kind: 'session', sessionId: 's2' } },
+              { id: 't2', status: 'paused', target: { kind: 'session', sessionId: 's3' } },
+              { id: 't3', status: 'active', target: { kind: 'new', create: {} } }
+            ]
+          })
+        },
+        agentPresets: { list: async () => ({ ok: true, value: { presets: [] } }) },
+        $on: () => () => {}
+      }
+    }
+  });
+  const entry = harness.registrations.find((item) => item.spec.name === 'main');
+  const source = entry.spec.inject().hooks.scheduleCatalog;
+  assert.ok(source, 'the schedule catalog reaches the board');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual([...source.getSnapshot().activeSessionIds], ['s2'], 'only an active target Session is marked');
+
+  const board = mountBoardWith(harness, { useScheduleCatalog: (selector) => selector(source.getSnapshot()) });
+  openSessionsTable(harness, board);
+  const tags = harness.doc.querySelectorAll('.pbx-kindTag.auto');
+  assert.equal(tags.length, 1, 'exactly one Session is tagged as an automation task');
+  const deepText = (node) => {
+    if (!node) return '';
+    if (typeof node.textContent === 'string' && node.textContent) return node.textContent;
+    return (node.children || []).map(deepText).join('');
+  };
+  assert.match(deepText(tags[0]), /automation|自动化/i);
+  assert.ok(harness.doc.querySelectorAll('.pbx-tr-auto').length >= 1, 'the marked row carries the automation class');
 });

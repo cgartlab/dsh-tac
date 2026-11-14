@@ -143,6 +143,10 @@
 
 - 失误：0.3.2 把 `sort.hint` 等字典改成 `{shift}` 占位符、settings.ts 渲染点已传 `MODIFIER_LABELS`，但 `src/features/board.ts` 的 3 个 `t('sort.hint')` 漏传第二参数（列头 tooltip 显示字面量 `{shift}`）；同时合并含 src 改动的 PR 时 `client.js` 没跟着重建，旧产物仍是修复前代码 → main CI step 7「The committed bundle matches src/」失败、`npm test` 在 HEAD 产物上 18 条中 2 条失败，运行时没有任何修复 → 规则：改字典占位符后必须 grep 全部 `t('<key>')` 渲染点并逐一传参；合并任何含 `src/` 改动的 PR 后必须 `npm run build`、`git diff --exit-code -- client.js index.js`，并确认 CI 的「产物一致」step 绿 → 证据：fe3f948，`src/features/board.ts`、`src/features/settings.ts`、`src/i18n/zh.ts`、`src/i18n/en.ts`、`test/load.test.cjs`、`client.js`
 
+## 宿主契约与版本适配
+
+- 失误：0.6.1 之前一直按 DSH 0.2.2-rc.1 的 `remote.schedule.catalog()` 读任务（记录顶层带 `sessionId`）；DSH 升到 rc.3 后记录改成 `target` 判别联合，顶层字段没了，服务名与方法名却完全没变——插件照常激活、日志全绿，只有"自动化任务"徽标/类型筛选静默失效（用户看不出是坏了还是没数据）→ 规则：DSH 每次大版本（甚至 rc 之间）升级后，逐一对照插件读过的每个宿主记录形状（`schedule.catalog`、`agentPresets.list`、`workspaces.list`、`session.binding`、快捷键 `catalog`）反查新版类型定义；读取处一律写成"兼容形状"并配一份**当前宿主形状**的 fixture 测试 → 证据：`2bef7d4` 之前的 rc.1 写法、本轮 `src/core/schedule.ts` + `test/shortcuts.test.cjs`（rc.3 记录样例）
+- 失误：右侧看板打开一直只调 `sidebarRight.toggleExpanded()`；rc.3 把"右侧栏是否出现"挪到 frame 层（`layout.openRightbar(track, fullscreen)` / `closeRightbar()`），dock 的展开标志已推不动栏宽，于是 Alt+N 只换了活动标签、栏宽始终 0（同一份代码在 rc.1 正常）→ 规则：宿主服务的方法名没变不代表语义没变；凡是宿主"开/关某个布局区域"的动作，改成优先走新版 frame/布局 API 并保留旧接口兜底，同时用两代宿主形状各写一条测试（`connectBoardPane({ frame: true })` / 默认 dock 形态） → 证据：本轮 `src/apply.ts`（`openDockBoard` / `closeDockBoard`）、`test/shortcuts.test.cjs`
 ## 发版与合并
 
 - 失误：在 `79e9d54` 解决 CHANGELOG 冲突时整体取了旧文件，把已随 v0.3.2 发布的 13 条又写回 `[未发布]`，同一批条目在两个小节重复——下一个版本会再"发"一遍已发布内容，读者也无法判断哪些真的没发 → 规则：解决 CHANGELOG 冲突以**已发布 tag 的版本小节**为准；发版后再合并分支，先按「条目前 40 字」比对 `[未发布]` 与各版本小节，重叠即删 → 证据：`76e6d81`（折叠）、`79e9d54`（merge 回退）、本轮修复

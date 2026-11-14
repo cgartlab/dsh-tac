@@ -34,5 +34,18 @@
       "verifiedThrough": "c1333a9"
     }
   ],
-  "acknowledgedStale": []
+  "acknowledgedStale": [
+    {
+      "reason": "0.6.1 changes no depicted surface (board toolbar/palette/HUD untouched); images were captured against the 0.6.0 build of the same UI.",
+      "path": "docs/screenshots/board.png"
+    },
+    {
+      "reason": "0.6.1 changes no depicted surface; images were captured against the 0.6.0 build of the same UI.",
+      "path": "docs/screenshots/hud.png"
+    },
+    {
+      "reason": "0.6.1 changes no depicted surface; images were captured against the 0.6.0 build of the same UI.",
+      "path": "docs/screenshots/palette.png"
+    }
+  ]
 }

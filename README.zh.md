@@ -94,9 +94,11 @@
   `dsh-client-ui-workspace`、`dsh-client-ui-session` 客户端包。
 - Node.js 18+ 仅用于仓库检查；插件本身由 Harness 加载。
 
-**已验证的版本**：DSH `0.2.2-rc.1`（macOS / Windows 桌面版与 Web UI）。
-DSH 处于开发者预览期，插件用到的都是公开客户端服务，但上游若有破坏性改动仍可能需要更新；
-遇到问题请附上 DSH 版本开 issue。
+**已验证的版本**：DSH `0.2.2-rc.3`（macOS / Windows 桌面版与 Web UI）。
+0.6.1 适配了 rc.3 的 frame 级右侧栏（`layout.openRightbar` / `closeRightbar`）与任务的
+`target.sessionId` 记录形状；两种形状都兼容读取，老的 rc.1 宿主仍走回落路径。DSH 处于开发者
+预览期，插件用到的都是公开客户端服务，但上游若有破坏性改动仍可能需要更新；遇到问题请附上
+DSH 版本开 issue。
 
 ## 安装
 
