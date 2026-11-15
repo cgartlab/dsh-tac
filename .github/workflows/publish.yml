@@ -1,0 +1,59 @@
+name: Publish
+
+# Publish to npm with trusted publishing (OIDC): no NPM_TOKEN, nothing to expire locally.
+# npmjs.com must list this workflow as a trusted publisher for the package:
+#   package settings → Trusted Publisher → GitHub Actions → cgartlab / dsh-tac / publish.yml
+#   and "npm publish" must be allowed (not only "npm stage publish").
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Tag or commit to publish (for a tag that already exists, e.g. v0.6.1)'
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: publish-${{ inputs.ref || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+          package-manager-cache: false
+
+      - name: Skip a version that is already on the registry
+        id: guard
+        run: |
+          version=$(node -p "require('./package.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if npm view "dsh-tac@$version" version >/dev/null 2>&1; then
+            echo "dsh-tac@$version is already published; nothing to do."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install and verify
+        if: steps.guard.outputs.skip == 'false'
+        run: |
+          npm ci
+          npm run check
+          npm test
+
+      - name: Publish
+        if: steps.guard.outputs.skip == 'false'
+        run: npm publish
