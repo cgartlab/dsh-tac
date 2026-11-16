@@ -56,13 +56,13 @@ CI（`.github/workflows/check.yml`）除此之外还会 `npm ci` 后重建并 `g
 
 ## 发布
 
-1. 改 `package.json` 的 version 与 `CHANGELOG.md` → 2. `npm run build` → 3. 跑上面四项 → 4. commit + push → 5. 打 tag `v<version>` 并 `gh release create v<version>` → 6. 发布到 npm（见下）→ 7. `npm run version:report` 核对全部版本面 → 8. 本机热重载验证（见下）
+**自动化发布（默认，无需任何登录）**：Agent 执行下面五步，你只需要确认版本号与 CHANGELOG 文案。
 
-**发布到 npm 有两条路，优先第一条：**
+1. 改 `package.json` 的 version 与 `CHANGELOG.md` 的 `## [x.y.z] - 日期` 小节 → 2. `npm run build` → 3. 手工 commit（Agent 提交，保持可审计）并 push → 4. `npm run release:preflight`（必须打印 READY）→ 5. `npm run release:tag`（打 annotated tag、push、`gh release create --latest`、轮询直到 registry 出现该版本；`--install` 顺便把本机 profile 换成 registry 版本）→ 6. `npm run version:report` 核对全部版本面。
 
-- **A. 可信发布（trusted publishing / OIDC，推荐）**：tag 推送后 `.github/workflows/publish.yml` 自动跑 `npm ci → check → test → npm publish`，不需要任何 token，也没有会过期的东西。前提是在 npmjs.com 的包设置里把这个工作流登记为 trusted publisher：`Trusted Publisher → GitHub Actions`，填 `cgartlab` / `dsh-tac` / `publish.yml`，并在 "Allowed actions" 里**允许 `npm publish`**（只允许 `npm stage publish` 时 CI 不能直接发）。已存在的 tag 可在 Actions 页面用 `workflow_dispatch` 补发（输入 tag 名）。
-- **一键本地发布**：`npm run release`（先 `npm login --auth-type=web` 一次；脚本会 `npm whoami` 自检，再 build → check → test → publish，`--dry-run` 只跑到测试）。
-- **B. 本地 token（备用）**：npm 自 2025-11 起只支持 **granular access token**，有效期最长 90 天，所以本地发布最多每季度重新生成一次。生成时给 `cgartlab` / `dsh-tac` 读+写权限，把 `//registry.npmjs.org/:_authToken=npm_...` 写进 `C:\Users\<用户>\.npmrc`（Windows 下就是 `~/.npmrc`），然后 `npm whoami` 必须输出 `cgartlab` 再发布。注意：`npm login` 只影响它所在环境的 home 目录（WSL/容器里登录不会写进 Windows 的 `.npmrc`），发布前先 `npm whoami` 自检，401 说明 token 失效，去重新生成而不是重试 `npm publish`。
+原理：tag 推送触发 `.github/workflows/publish.yml`，用 **OIDC 可信发布**直接 `npm publish`，不需要 `NPM_TOKEN`、不会过期；npmjs.com 已为 `cgartlab/dsh-tac` 绑定 `publish.yml`（允许 `npm publish`）。完整步骤与失败处理见 `docs/releasing.md`。
+
+**本地兜底**：只有 OIDC 不可用时才用 `npm run release`（先 `npm login --auth-type=web`；脚本会 `npm whoami` 自检，401 时去重新登录而不是重试 publish）。npm 自 2025-11 起只支持 granular token（最长 90 天），2027-01 起 2FA-bypass token 不能再直接发布，所以这不是长期方案。
 
 `npm run version:report` 一次列出所有版本面（`package.json` / 锁文件 / 两个产物 banner / CHANGELOG 标题 / git tag / npm latest / GitHub release notes 与 CHANGELOG 小节是否逐行一致 / 市场目录）并标出不一致。**市场目录（`dsh-plugin-catalog`）每天约 04:50 UTC 重建一次**，所以发布后市场页的版本会滞后到次日重建，这是正常现象，不是漏发；报告会把它标成 `lags` 并注明。`--offline` 可跳过联网检查。本机还可以加 `--gui=http://127.0.0.1:<端口>`（桌面端市场更新 API 免认证）核对**运行中的应用**装的是哪个版本：`npm run version:report -- --gui=http://127.0.0.1:59752`。
 

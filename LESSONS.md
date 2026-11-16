@@ -147,6 +147,9 @@
 
 - 失误：0.6.1 之前一直按 DSH 0.2.2-rc.1 的 `remote.schedule.catalog()` 读任务（记录顶层带 `sessionId`）；DSH 升到 rc.3 后记录改成 `target` 判别联合，顶层字段没了，服务名与方法名却完全没变——插件照常激活、日志全绿，只有"自动化任务"徽标/类型筛选静默失效（用户看不出是坏了还是没数据）→ 规则：DSH 每次大版本（甚至 rc 之间）升级后，逐一对照插件读过的每个宿主记录形状（`schedule.catalog`、`agentPresets.list`、`workspaces.list`、`session.binding`、快捷键 `catalog`）反查新版类型定义；读取处一律写成"兼容形状"并配一份**当前宿主形状**的 fixture 测试 → 证据：`2bef7d4` 之前的 rc.1 写法、本轮 `src/core/schedule.ts` + `test/shortcuts.test.cjs`（rc.3 记录样例）
 - 失误：右侧看板打开一直只调 `sidebarRight.toggleExpanded()`；rc.3 把"右侧栏是否出现"挪到 frame 层（`layout.openRightbar(track, fullscreen)` / `closeRightbar()`），dock 的展开标志已推不动栏宽，于是 Alt+N 只换了活动标签、栏宽始终 0（同一份代码在 rc.1 正常）→ 规则：宿主服务的方法名没变不代表语义没变；凡是宿主"开/关某个布局区域"的动作，改成优先走新版 frame/布局 API 并保留旧接口兜底，同时用两代宿主形状各写一条测试（`connectBoardPane({ frame: true })` / 默认 dock 形态） → 证据：本轮 `src/apply.ts`（`openDockBoard` / `closeDockBoard`）、`test/shortcuts.test.cjs`
+## 测试与时间
+
+- 失误：分组测试用固定偏移造样本（`now - 2 天` 期望落到「本周」），周一/周二的周界一变，这条测试就从绿变红，卡住了自动发布预检（2026-11-16 周一边界复现）→ 规则：凡是和「今天 / 昨天 / 本周 / 更早」这类日历边界有关的行为，测试样本必须**用与实现相同的边界函数推导**（startOfToday / startOfWeek / 星期偏移），并对边界不可达的情况（周一没有「本周」样本）显式分支，不用裸时间戳 → 证据：`test/shortcuts.test.cjs` 的 `weekSample` / `earlierSample`，`src/features/board.ts` 的 `timeGroup`
 ## 发版与合并
 
 - 失误：在 `79e9d54` 解决 CHANGELOG 冲突时整体取了旧文件，把已随 v0.3.2 发布的 13 条又写回 `[未发布]`，同一批条目在两个小节重复——下一个版本会再"发"一遍已发布内容，读者也无法判断哪些真的没发 → 规则：解决 CHANGELOG 冲突以**已发布 tag 的版本小节**为准；发版后再合并分支，先按「条目前 40 字」比对 `[未发布]` 与各版本小节，重叠即删 → 证据：`76e6d81`（折叠）、`79e9d54`（merge 回退）、本轮修复

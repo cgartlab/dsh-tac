@@ -21,6 +21,8 @@
   "type": "module",
   "scripts": {
     "release": "node scripts/release.mjs",
+    "release:preflight": "node scripts/release-preflight.mjs",
+    "release:tag": "node scripts/release-tag.mjs",
     "build": "node scripts/build.mjs",
     "typecheck": "tsc --noEmit",
     "check": "tsc --noEmit && node scripts/check-bundle.cjs && node scripts/check-i18n.cjs && node scripts/check-screenshots.cjs",

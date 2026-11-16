@@ -4696,12 +4696,26 @@ test('the board groups the session table by status and collapses a group', () =>
 test('grouping covers kind, preset, current session and update buckets', () => {
   const harness = createHarness();
   const now = Date.now();
+  /* Buckets are calendar-relative (today / yesterday / this week / earlier), so fixed offsets are
+     fragile: "now - 2 days" is yesterday at the start of a week and last week at its end. Derive
+     the samples from the same boundaries the board uses. */
+  const clock = new Date();
+  const startOfToday = new Date(clock.getFullYear(), clock.getMonth(), clock.getDate()).getTime();
+  const mondayOffset = (clock.getDay() + 6) % 7;
+  const startOfWeek = startOfToday - mondayOffset * 86400000;
+  /* Monday 01:00 exists as a "this week" sample only from Wednesday on; on Monday and Tuesday
+     the previous day already is the oldest day of the week. */
+  const weekSample = mondayOffset >= 2 ? startOfWeek + 3600000 : startOfToday - 1;
+  const weekLabel = mondayOffset >= 2 ? 'thisWeek' : 'yesterday';
+  /* "Earlier" must stay strictly before the week start; on Monday the week starts today, so the
+     previous weekend is the oldest sample. */
+  const earlierSample = mondayOffset >= 1 ? startOfWeek - 1 : startOfToday - 2 * 86400000;
   const sessions = {
     ids: ['s1', 's2', 's3'],
     byId: {
       s1: { id: 's1', title: 'Alpha', updatedAt: now, running: true, projectionValues: { agentPreset: 'code' } },
-      s2: { id: 's2', title: 'Beta', updatedAt: now - 40 * 86400000, retainedBy: { mainView: 1 } },
-      s3: { id: 's3', title: 'Gamma', updatedAt: now - 2 * 86400000, projectionValues: { agentPreset: 'chat' } }
+      s2: { id: 's2', title: 'Beta', updatedAt: earlierSample, retainedBy: { mainView: 1 } },
+      s3: { id: 's3', title: 'Gamma', updatedAt: weekSample, projectionValues: { agentPreset: 'chat' } }
     }
   };
   const board = mountBoardWith(harness, {
@@ -4725,7 +4739,11 @@ test('grouping covers kind, preset, current session and update buckets', () => {
   assert.deepEqual(groupLabels(harness), [t('group.currentYes'), t('group.currentNo')], 'the current session stands apart');
 
   pick('updated');
-  assert.deepEqual(groupLabels(harness), [t('group.today'), t('group.thisWeek'), t('group.earlier')], 'update buckets climb from today through this week to earlier');
+  assert.deepEqual(
+    groupLabels(harness),
+    [t('group.today'), t('group.' + weekLabel), t('group.earlier')],
+    'update buckets climb from today through the current week to earlier'
+  );
 });
 /* ------------------------------------------------- demo-path coverage: sort / batch / columns */
 
