@@ -40,6 +40,8 @@ export interface HostSidebarRight {
   toggleExpanded(): void;
   commandTarget?: () => unknown;
   toggleFullscreen?(target: unknown): void;
+  /** Removes the active tab of the current pane. Not always exposed; guarded at the call site. */
+  closeTab?: () => void;
 }
 
 export interface HostLayout {
