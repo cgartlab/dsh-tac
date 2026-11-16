@@ -89,6 +89,31 @@ independent boards: each owns its own view-request store (`boardViewStores.main`
 tabs. `openBoard` only resets to the project view when the board is actually closed — bringing
 an already-open board to the front keeps the tab the reader picked.
 
+### Visibility is one measurement, never an inference
+
+Three different facts used to be conflated, and each one lied on its own:
+
+| question | wrong answer | why it lied |
+| --- | --- | --- |
+| is the pane open? | `data-sidebar-right-open` | the host keeps it `"true"` on a hidden pane |
+| is the pane open? | panel `getBoundingClientRect().width` | the panel stays mounted at full width when hidden |
+| is the board tab placed? | `sidebarRight.active()?.kind` | keeps naming the board after the host unmounted its body |
+
+`boardPaneShown()` therefore has exactly one source: the rendered width of the frame's right
+column (`[data-rightbar-col]`), `0` meaning closed. Attributes and service flags are only used to
+*effect* a change. Because the host also **unmounts the tab body** when the column is hidden,
+opening never trusts a previous placement: it calls `sidebarRight.openTab(BOARD_KIND)` every time
+(the same call the host's own sidebar button makes), then widens the column.
+
+Both directions are verified after 200-400 ms and logged when they do not hold
+(`board:close-ineffective`, `board:open-ineffective`), so a host change surfaces as a warning
+instead of a key that silently performs half its job.
+
+**Before trusting a local test, read the app's own log.** The desktop window keeps it in
+`%APPDATA%\@deepseek-ai\dsh-desktop\Local Storage\leveldb` (`*.log` / `*.ldb`, UTF-16LE
+`key\0value` records); the reader is described in `docs/releasing.md`. Driving the web build
+proves the plugin's logic works — it does not prove the window the user is pressing keys in
+reloaded it.
 ## Keyboard handling
 
 A single capture-phase `keydown` listener on `document` resolves the configured combo for

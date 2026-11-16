@@ -39,3 +39,17 @@
 ## 市场目录
 
 `dsh-plugin-catalog` 每天约 04:50 UTC（北京时间 12:50）重建一次，发布后市场页会滞后到次日；`version:report` 会标成 `lags`，这不是漏发。
+
+## 验收：先读桌面窗口自己的日志
+
+插件把日志写进 `%APPDATA%\@deepseek-ai\dsh-desktop\Local Storage\leveldb`（Chromium localStorage，`key\0value`，UTF-16LE）。`*.log` / `*.ldb` 里以 `{"entries":[` 开头的段落就是日志环形缓冲，用 Python 直接解码即可，不必启动 Chromium：
+
+```python
+data = open(ldb_path, "rb").read().decode("utf-16-le", errors="ignore")
+# 找到 {"entries":[ ... ]} 后 json.loads 即为最近 120 条
+```
+
+看到 `init plugin ready` 的数据里带 `shortcuts/hud/board`，以及 `board:toggle` 带 `shown/width`，
+说明窗口里跑的是新代码；两者都没有就是不匹配——先让窗口重载（`Ctrl+R` 或
+`plugin_manager set_plugin target="include:dsh-tac" enabled=false/true`），再验证功能。
+只验证自己开的 web 会话不能代替这一步。
