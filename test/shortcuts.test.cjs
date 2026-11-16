@@ -4696,12 +4696,23 @@ test('the board groups the session table by status and collapses a group', () =>
 test('grouping covers kind, preset, current session and update buckets', () => {
   const harness = createHarness();
   const now = Date.now();
+  /* The "updated" buckets depend on the real weekday (board.ts groups by Monday-start week):
+     Monday/Tuesday have no "this week but not today/yesterday" slot, so a fixed "now - 2 days"
+     fixture lands in "Earlier" and the old assertion failed every Monday. Compute the same
+     week boundaries the product uses and pick a mid sample that is genuinely "this week" when
+     such a day exists, otherwise a "yesterday" sample, so the test is green on any weekday. */
+  const today = new Date(now);
+  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+  const mondayOffset = (today.getDay() + 6) % 7;
+  const startOfWeek = startOfToday - mondayOffset * 86400000;
+  const hasThisWeekSlot = mondayOffset >= 2;
+  const midAt = hasThisWeekSlot ? startOfWeek + 3600000 : startOfToday - 3600000;
   const sessions = {
     ids: ['s1', 's2', 's3'],
     byId: {
       s1: { id: 's1', title: 'Alpha', updatedAt: now, running: true, projectionValues: { agentPreset: 'code' } },
       s2: { id: 's2', title: 'Beta', updatedAt: now - 40 * 86400000, retainedBy: { mainView: 1 } },
-      s3: { id: 's3', title: 'Gamma', updatedAt: now - 2 * 86400000, projectionValues: { agentPreset: 'chat' } }
+      s3: { id: 's3', title: 'Gamma', updatedAt: midAt, projectionValues: { agentPreset: 'chat' } }
     }
   };
   const board = mountBoardWith(harness, {
@@ -4725,7 +4736,13 @@ test('grouping covers kind, preset, current session and update buckets', () => {
   assert.deepEqual(groupLabels(harness), [t('group.currentYes'), t('group.currentNo')], 'the current session stands apart');
 
   pick('updated');
-  assert.deepEqual(groupLabels(harness), [t('group.today'), t('group.thisWeek'), t('group.earlier')], 'update buckets climb from today through this week to earlier');
+  if (hasThisWeekSlot) {
+    assert.deepEqual(groupLabels(harness), [t('group.today'), t('group.thisWeek'), t('group.earlier')], 'update buckets climb from today through this week to earlier');
+  } else {
+    /* On Monday/Tuesday the mid sample can only be "yesterday" — the week has no separate
+       this-week day between today and yesterday. */
+    assert.deepEqual(groupLabels(harness), [t('group.today'), t('group.yesterday'), t('group.earlier')], 'update buckets climb from today through yesterday to earlier on Mon/Tue');
+  }
 });
 /* ------------------------------------------------- demo-path coverage: sort / batch / columns */
 
