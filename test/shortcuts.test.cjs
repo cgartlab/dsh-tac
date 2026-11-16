@@ -4912,6 +4912,33 @@ test('Alt+N toggles against the rendered column, not the stale dock flag', () =>
   assert.equal(state.width, 380, 'a closed board can be reopened');
   assert.equal(harness.services.calls.openRightbar.length, 2, 'the frame API is used again on reopen');
 });
+test('Alt+V leaves fullscreen so a second press can close the board', () => {
+  const harness = createHarness();
+  const state = connectBoardPane(harness, { frame: true });
+  harness.resetState();
+  harness.clearSpies();
+
+  harness.pressCombo('alt+KeyV');
+  assert.equal(state.fullscreen, true, 'the first press enters fullscreen');
+  assert.equal(state.width, 380, 'a fullscreen presentation still reserves the column');
+
+  harness.pressCombo('alt+KeyV');
+  assert.equal(state.fullscreen, false, 'the second press must leave fullscreen');
+});
+
+test('a fullscreen body wider than the column still counts as visible', () => {
+  const harness = createHarness();
+  const state = connectBoardPane(harness, { frame: true });
+  harness.resetState();
+  harness.clearSpies();
+
+  harness.pressCombo('alt+KeyV');
+  /* Fullscreen overlays the frame: the body is wider than the column track, which is why an
+     in-column test called it hidden and the toggle never closed. */
+  assert.equal(state.fullscreen, true);
+  const markers = harness.doc.querySelectorAll('[data-rightbar-fullscreen]');
+  assert.ok(markers.length >= 1, 'the fullscreen marker the plugin reads is present');
+});
 test('a body left painted after the column clamps still closes the board', () => {
   const harness = createHarness();
   const state = connectBoardPane(harness, { frame: true });

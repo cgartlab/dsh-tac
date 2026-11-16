@@ -69,6 +69,15 @@ export function hostRightbarWidth(): number {
  */
 export function boardPanePainted(): boolean {
   try {
+    /* Fullscreen is its own presentation: the panel overlays the whole frame and the body is
+       wider than the (still-measured) column track, so an in-column test would call it hidden. */
+    if (isRightbarFullscreen()) {
+      const panel = rightPanelElement();
+      if (panel) {
+        const r = panel.getBoundingClientRect();
+        return r.width >= 40 && r.height >= 40;
+      }
+    }
     const column = document.querySelector('[data-rightbar-col]') || document.querySelector('[class*="_rightbarCol"]');
     if (!column) {
       const panel = rightPanelElement();
@@ -93,13 +102,16 @@ export function boardPanePainted(): boolean {
 }
 
 /**
- * Find a board body painted outside any column — a leftover after the host clamped the pane.
+ * Find a board body painted outside the visible pane — a leftover after the host clamped or
+ * overlaid the column.
  *
- * Returns the widest such copy, or null. Used to verify a close and to decide whether a fresh
- * `openTab` is needed on the next open (a clamped body is not reusable: it stays where it is).
+ * Returns the widest such copy, or null. Fullscreen is exempt: there the panel covers the frame
+ * and the body legitimately exceeds the column. Used to verify a close and to decide whether a
+ * fresh `openTab` is needed on the next open (a leftover body is not reusable).
  */
 export function strayBoardBody(): Element | null {
   try {
+    if (isRightbarFullscreen()) return null;
     const bodies = Array.from(document.querySelectorAll('.pbx-responsive, .pbx-root, .pbx-boardBody'));
     let widest: Element | null = null;
     let widestWidth = 0;
@@ -121,7 +133,6 @@ export function strayBoardBody(): Element | null {
     return null;
   }
 }
-
 /** Whether the right pane is currently showing fullscreen. */
 export function isRightbarFullscreen(): boolean {
   try {
@@ -175,7 +186,7 @@ export function isInsideCentreColumn(node: Element | null): boolean {
   }
 }
 
-/** The host's frame element — the grid that carries the sidebar column and its flags. */
+/** The host's frame element 鈥?the grid that carries the sidebar column and its flags. */
 export function sidebarFrameElement(): HTMLElement | null {
   try {
     return (

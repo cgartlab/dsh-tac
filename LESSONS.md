@@ -146,20 +146,15 @@
 ## 宿主契约与版本适配
 
 - 失误：0.6.2 修好"收不起来"后，重开变成"空面板"——只验证了列宽 380，没有验证面板里有没有内容；宿主隐藏列时会卸载标签内容，而 `active()` 仍报看板激活，于是打开路径跳过了唯一能挂回内容的 `openTab` → 规则：**几何不等于内容**，可见性/可用性必须验证用户真正看到的东西（面板内的 body 与文字），宿主隐藏面板后重新打开一律**无条件重新放置标签**，不能用 `active()` 推断内容还在 → 证据：`src/apply.ts`（`openDockBoard` 无条件 `openTab` + `verifyBoardOpened`）、`test/shortcuts.test.cjs`（`bodyMounted` 回归）
-## 宿主契约与版本适配
 
 - 失误：0.6.1 之前一直按 DSH 0.2.2-rc.1 的 `remote.schedule.catalog()` 读任务（记录顶层带 `sessionId`）；DSH 升到 rc.3 后记录改成 `target` 判别联合，顶层字段没了，服务名与方法名却完全没变——插件照常激活、日志全绿，只有"自动化任务"徽标/类型筛选静默失效（用户看不出是坏了还是没数据）→ 规则：DSH 每次大版本（甚至 rc 之间）升级后，逐一对照插件读过的每个宿主记录形状（`schedule.catalog`、`agentPresets.list`、`workspaces.list`、`session.binding`、快捷键 `catalog`）反查新版类型定义；读取处一律写成"兼容形状"并配一份**当前宿主形状**的 fixture 测试 → 证据：`2bef7d4` 之前的 rc.1 写法、本轮 `src/core/schedule.ts` + `test/shortcuts.test.cjs`（rc.3 记录样例）
 - 失误：右侧看板打开一直只调 `sidebarRight.toggleExpanded()`；rc.3 把"右侧栏是否出现"挪到 frame 层（`layout.openRightbar(track, fullscreen)` / `closeRightbar()`），dock 的展开标志已推不动栏宽，于是 Alt+N 只换了活动标签、栏宽始终 0（同一份代码在 rc.1 正常）→ 规则：宿主服务的方法名没变不代表语义没变；凡是宿主"开/关某个布局区域"的动作，改成优先走新版 frame/布局 API 并保留旧接口兜底，同时用两代宿主形状各写一条测试（`connectBoardPane({ frame: true })` / 默认 dock 形态） → 证据：本轮 `src/apply.ts`（`openDockBoard` / `closeDockBoard`）、`test/shortcuts.test.cjs`
-## 宿主契约与版本适配
-
-- 失误：0.6.2 修好"收不起来"后，重开变成"空面板"——只验证了列宽 380，没有验证面板里有没有内容；宿主隐藏列时会卸载标签内容，而 `active()` 仍报看板激活，于是打开路径跳过了唯一能挂回内容的 `openTab` → 规则：**几何不等于内容**，可见性/可用性必须验证用户真正看到的东西（面板内的 body 与文字），宿主隐藏面板后重新打开一律**无条件重新放置标签**，不能用 `active()` 推断内容还在 → 证据：`src/apply.ts`（`openDockBoard` 无条件 `openTab` + `verifyBoardOpened`）、`test/shortcuts.test.cjs`（`bodyMounted` 回归）
-## 宿主契约与版本适配
 
 - 失误：0.6.1 用"面板属性 + 宽度回退"两层推断看板是否打开；rc.3 关闭后仍把面板挂在 DOM 里（属性保持 true、面板宽度仍是全宽），两层推断都把"已关闭"读成"已打开"，Alt+N 于是永远走关闭分支——用户看到的是"怎么按都收不起来"→ 规则：**可见性判据只能有一个，而且必须是渲染结果**（frame 列宽度），属性/服务标志一律只用于*执行*动作，不能用于*判断*状态；任何"是否显示"的探测都要能被用户肉眼复核 → 证据：`src/core/dom.ts`（列宽权威）、`src/apply.ts`（`boardPaneShown`）、`test/shortcuts.test.cjs`（`connectBoardPane` 复刻 rc.3 的陈旧标志 + 开→关→再开回归）
+- 失误：0.6.4 的可见性判据要求"看板内容在右栏列内"，而全屏时面板是覆盖整个 frame 的 overlay、内容比列更宽，于是全屏被读成"隐藏"，Alt+V 第二次按下仍走打开分支（只能开不能关）→ 规则：同一功能的展示形态不止一种（停靠 / 半宽 / 全屏），**判据必须覆盖所有形态**：先认宿主给的形态标记（`data-rightbar-fullscreen`），再按该形态应有的几何读尺寸；每种形态都要有一条回归测试 → 证据：`src/core/dom.ts`（`boardPanePainted` 先判全屏）、`test/shortcuts.test.cjs`（Alt+V 两条用例）
 ## 验证方法
 
 - 失误：0.6.2/0.6.3 用"列宽 0"当"已关闭"，用户实际看到的是宿主把列夹到 0、标签内容仍以全宽挂在绝对定位层上继续显示（"画布变宽、看板还在，像开了两层"）→ 规则：**几何测量必须对准真正绘制的内容**——判断面板是否可见要看"内容是否画在面板范围内且尺寸非零"，并同时检查"有没有画在外面的残留副本"；只测容器尺寸会把被夹住的绝对定位层判成已隐藏 → 证据：`src/core/dom.ts` 的 `boardPanePainted` / `strayBoardBody`，`test/shortcuts.test.cjs` 的 "a body left painted after the column clamps" 回归
-## 验证方法
 
 - 失误：连续三轮都用“自己开的无头浏览器 + 合成事件”验收，程序侧每次全绿，用户按 Alt+N 依旧完全没反应；真相是用户操作的**桌面窗口**里跑的是旧 bundle（其日志停在修复前的 `shown/active` 字段），而我只验证了另一条渲染链 → 规则：验收必须命中用户真正使用的运行环境；本机桌面窗口的日志在 `%APPDATA%\@deepseek-ai\dsh-desktop\Local Storage\leveldb`，改完先读它——看到 `plugin ready` 与 `board:toggle` 才会出现新字段（`shown/width`），据此判断窗口是否已加载新代码，再谈功能是否正常 → 证据：2026-11-16 的 leveldb 导出（旧 bundle 只有 `{"mode":"narrow"}`）
 - 失误：只截“打开”的图就宣称双向可用，用户质疑“你截不出关闭的状态” → 规则：涉及开关、折叠、显隐的演示必须**成对呈现**（开/关各一帧，最好一张含四格时序的对照图），并在同一段录制里连续按出全部状态，不拿单帧代表全过程 → 证据：`docs/demo/alt-n-toggle-sheet.jpg`

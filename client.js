@@ -1,4 +1,4 @@
-/*! dsh-tac 0.6.4 — generated from src/ by scripts/build.mjs; do not edit */
+/*! dsh-tac 0.6.5 — generated from src/ by scripts/build.mjs; do not edit */
 "use strict";
 (() => {
   // src/constants.ts
@@ -544,6 +544,13 @@
   }
   function boardPanePainted() {
     try {
+      if (isRightbarFullscreen()) {
+        const panel = rightPanelElement();
+        if (panel) {
+          const r = panel.getBoundingClientRect();
+          return r.width >= 40 && r.height >= 40;
+        }
+      }
       const column = document.querySelector("[data-rightbar-col]") || document.querySelector('[class*="_rightbarCol"]');
       if (!column) {
         const panel = rightPanelElement();
@@ -567,6 +574,7 @@
   }
   function strayBoardBody() {
     try {
+      if (isRightbarFullscreen()) return null;
       const bodies = Array.from(document.querySelectorAll(".pbx-responsive, .pbx-root, .pbx-boardBody"));
       let widest = null;
       let widestWidth = 0;
