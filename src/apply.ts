@@ -397,14 +397,52 @@ export function apply(ctx: HostContext): void {
     }
     return false;
   };
-  /** Open the docked board: activate its tab, then make the frame column appear. */
+  /**
+   * Open the docked board.
+   *
+   * Always re-place the tab first. `sidebarRight.active()` keeps naming the board after the frame
+   * hides the column, but the host unmounts the tab body with the pane, so a guarded `openTab`
+   * reopened an empty pane: the column appeared with no board inside. Re-placing the tab is what
+   * the host's own toggle does, and it is cheap when the tab is already there.
+   */
   const openDockBoard = (): void => {
     const sidebarRight = ctx.sidebarRight;
     if (!sidebarRight) return;
-    if (!rightBoardActive()) sidebarRight.openTab(BOARD_KIND);
-    if (boardPaneShown()) return;
-    if (showRightPane()) return;
-    if (typeof sidebarRight.toggleExpanded === 'function') sidebarRight.toggleExpanded();
+    try {
+      sidebarRight.openTab(BOARD_KIND);
+    } catch (error) {
+      /* ignore */
+    }
+    if (!boardPaneShown()) {
+      if (!showRightPane()) {
+        try {
+          if (typeof sidebarRight.toggleExpanded === 'function') sidebarRight.toggleExpanded();
+        } catch (error) {
+          /* ignore */
+        }
+      }
+    }
+    verifyBoardOpened();
+  };
+  /** Opening that leaves an empty pane is the same failure as a close that does not close. */
+  const verifyBoardOpened = (): void => {
+    later(() => {
+      try {
+        if (!boardPaneShown()) return;
+        const column = rightbarColumnElement();
+        const body = column ? column.querySelector('.pbx-responsive, .pbx-root') : null;
+        const text = body ? (body.textContent || '').trim() : '';
+        if (body && text.length > 0) return;
+        logEvent('warn', 'board', 'open-ineffective', {
+          width: Math.round(rightbarWidthNow()),
+          hasBody: Boolean(body),
+          bodyChars: text.length,
+          active: rightBoardActive()
+        });
+      } catch (error) {
+        /* ignore */
+      }
+    }, 400);
   };
   /**
    * Hide the docked board.

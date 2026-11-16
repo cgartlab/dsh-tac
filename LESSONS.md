@@ -145,8 +145,14 @@
 
 ## 宿主契约与版本适配
 
+- 失误：0.6.2 修好"收不起来"后，重开变成"空面板"——只验证了列宽 380，没有验证面板里有没有内容；宿主隐藏列时会卸载标签内容，而 `active()` 仍报看板激活，于是打开路径跳过了唯一能挂回内容的 `openTab` → 规则：**几何不等于内容**，可见性/可用性必须验证用户真正看到的东西（面板内的 body 与文字），宿主隐藏面板后重新打开一律**无条件重新放置标签**，不能用 `active()` 推断内容还在 → 证据：`src/apply.ts`（`openDockBoard` 无条件 `openTab` + `verifyBoardOpened`）、`test/shortcuts.test.cjs`（`bodyMounted` 回归）
+## 宿主契约与版本适配
+
 - 失误：0.6.1 之前一直按 DSH 0.2.2-rc.1 的 `remote.schedule.catalog()` 读任务（记录顶层带 `sessionId`）；DSH 升到 rc.3 后记录改成 `target` 判别联合，顶层字段没了，服务名与方法名却完全没变——插件照常激活、日志全绿，只有"自动化任务"徽标/类型筛选静默失效（用户看不出是坏了还是没数据）→ 规则：DSH 每次大版本（甚至 rc 之间）升级后，逐一对照插件读过的每个宿主记录形状（`schedule.catalog`、`agentPresets.list`、`workspaces.list`、`session.binding`、快捷键 `catalog`）反查新版类型定义；读取处一律写成"兼容形状"并配一份**当前宿主形状**的 fixture 测试 → 证据：`2bef7d4` 之前的 rc.1 写法、本轮 `src/core/schedule.ts` + `test/shortcuts.test.cjs`（rc.3 记录样例）
 - 失误：右侧看板打开一直只调 `sidebarRight.toggleExpanded()`；rc.3 把"右侧栏是否出现"挪到 frame 层（`layout.openRightbar(track, fullscreen)` / `closeRightbar()`），dock 的展开标志已推不动栏宽，于是 Alt+N 只换了活动标签、栏宽始终 0（同一份代码在 rc.1 正常）→ 规则：宿主服务的方法名没变不代表语义没变；凡是宿主"开/关某个布局区域"的动作，改成优先走新版 frame/布局 API 并保留旧接口兜底，同时用两代宿主形状各写一条测试（`connectBoardPane({ frame: true })` / 默认 dock 形态） → 证据：本轮 `src/apply.ts`（`openDockBoard` / `closeDockBoard`）、`test/shortcuts.test.cjs`
+## 宿主契约与版本适配
+
+- 失误：0.6.2 修好"收不起来"后，重开变成"空面板"——只验证了列宽 380，没有验证面板里有没有内容；宿主隐藏列时会卸载标签内容，而 `active()` 仍报看板激活，于是打开路径跳过了唯一能挂回内容的 `openTab` → 规则：**几何不等于内容**，可见性/可用性必须验证用户真正看到的东西（面板内的 body 与文字），宿主隐藏面板后重新打开一律**无条件重新放置标签**，不能用 `active()` 推断内容还在 → 证据：`src/apply.ts`（`openDockBoard` 无条件 `openTab` + `verifyBoardOpened`）、`test/shortcuts.test.cjs`（`bodyMounted` 回归）
 ## 宿主契约与版本适配
 
 - 失误：0.6.1 用"面板属性 + 宽度回退"两层推断看板是否打开；rc.3 关闭后仍把面板挂在 DOM 里（属性保持 true、面板宽度仍是全宽），两层推断都把"已关闭"读成"已打开"，Alt+N 于是永远走关闭分支——用户看到的是"怎么按都收不起来"→ 规则：**可见性判据只能有一个，而且必须是渲染结果**（frame 列宽度），属性/服务标志一律只用于*执行*动作，不能用于*判断*状态；任何"是否显示"的探测都要能被用户肉眼复核 → 证据：`src/core/dom.ts`（列宽权威）、`src/apply.ts`（`boardPaneShown`）、`test/shortcuts.test.cjs`（`connectBoardPane` 复刻 rc.3 的陈旧标志 + 开→关→再开回归）

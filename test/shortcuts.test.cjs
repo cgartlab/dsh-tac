@@ -1993,7 +1993,7 @@ function connectBoardPane(harness, options) {
      `data-sidebar-right-open="true"` after `closeRightbar` — that stale flag is what made an
      attribute-based close look successful while the board was still on screen, so the harness
      reproduces it. */
-  const state = { kind: null, expanded: false, fullscreen: false, width: 0, preferred: 380 };
+  const state = { kind: null, expanded: false, fullscreen: false, width: 0, preferred: 380, bodyMounted: false };
   const panel = new VirtualNode('div', { class: '_panel' }, [], harness.doc);
   const column = new VirtualNode('div', { 'data-rightbar-col': '' }, [], harness.doc);
   const fullscreenNode = new VirtualNode('div', { 'data-rightbar-fullscreen': 'true' }, [], harness.doc);
@@ -2016,11 +2016,13 @@ function connectBoardPane(harness, options) {
   harness.services.sidebarRight.isExpanded = () => state.expanded;
   harness.services.sidebarRight.openTab = (kind) => {
     state.kind = kind;
+    state.bodyMounted = true;
     harness.services.calls.sidebarOpenTab.push(kind);
     sync();
   };
   harness.services.sidebarRight.toggleExpanded = () => {
     state.expanded = !state.expanded;
+    if (state.expanded) state.bodyMounted = true;
     harness.services.calls.sidebarToggleExpanded.push(state.expanded);
     sync();
   };
@@ -2047,6 +2049,9 @@ function connectBoardPane(harness, options) {
     harness.services.layout.closeRightbar = () => {
       harness.services.calls.closeRightbar.push(true);
       state.expanded = false;
+      /* The host unmounts the tab body with the hidden pane; only placing the tab again mounts it,
+         so a frame-only show would leave an empty pane. */
+      state.bodyMounted = false;
       sync();
     };
   }
@@ -4872,6 +4877,25 @@ test('Alt+N toggles against the rendered column, not the stale dock flag', () =>
   harness.pressCombo('alt+KeyN');
   assert.equal(state.width, 380, 'a closed board can be reopened');
   assert.equal(harness.services.calls.openRightbar.length, 2, 'the frame API is used again on reopen');
+});
+test('reopening the pane re-places the tab, so the board body is not blank', () => {
+  const harness = createHarness();
+  const state = connectBoardPane(harness, { frame: true });
+  harness.resetState();
+  harness.clearSpies();
+
+  harness.pressCombo('alt+KeyN');
+  assert.equal(state.width, 380, 'the pane opens');
+  assert.equal(state.bodyMounted, true, 'the board body is mounted');
+
+  harness.pressCombo('alt+KeyN');
+  assert.equal(state.width, 0, 'the pane closes');
+  assert.equal(state.bodyMounted, false, 'the host unmounts the tab body with the pane');
+
+  harness.pressCombo('alt+KeyN');
+  assert.equal(state.width, 380, 'the pane reopens');
+  assert.equal(state.bodyMounted, true, 'the body is mounted again, not an empty pane');
+  assert.ok(harness.services.calls.sidebarOpenTab.length >= 2, 'the tab is re-placed on every open');
 });
 test('a dock-only host still opens the board through sidebarRight.toggleExpanded', () => {
   const harness = createHarness();

@@ -1,4 +1,4 @@
-/*! dsh-tac 0.6.2 — generated from src/ by scripts/build.mjs; do not edit */
+/*! dsh-tac 0.6.3 — generated from src/ by scripts/build.mjs; do not edit */
 "use strict";
 (() => {
   // src/constants.ts
@@ -7644,10 +7644,37 @@
     const openDockBoard = () => {
       const sidebarRight = ctx.sidebarRight;
       if (!sidebarRight) return;
-      if (!rightBoardActive()) sidebarRight.openTab(BOARD_KIND);
-      if (boardPaneShown()) return;
-      if (showRightPane()) return;
-      if (typeof sidebarRight.toggleExpanded === "function") sidebarRight.toggleExpanded();
+      try {
+        sidebarRight.openTab(BOARD_KIND);
+      } catch (error) {
+      }
+      if (!boardPaneShown()) {
+        if (!showRightPane()) {
+          try {
+            if (typeof sidebarRight.toggleExpanded === "function") sidebarRight.toggleExpanded();
+          } catch (error) {
+          }
+        }
+      }
+      verifyBoardOpened();
+    };
+    const verifyBoardOpened = () => {
+      later(() => {
+        try {
+          if (!boardPaneShown()) return;
+          const column = rightbarColumnElement();
+          const body = column ? column.querySelector(".pbx-responsive, .pbx-root") : null;
+          const text = body ? (body.textContent || "").trim() : "";
+          if (body && text.length > 0) return;
+          logEvent("warn", "board", "open-ineffective", {
+            width: Math.round(rightbarWidthNow()),
+            hasBody: Boolean(body),
+            bodyChars: text.length,
+            active: rightBoardActive()
+          });
+        } catch (error) {
+        }
+      }, 400);
     };
     const closeDockBoard = () => {
       if (!boardPaneShown()) return;
