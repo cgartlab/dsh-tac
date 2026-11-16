@@ -21,8 +21,16 @@ const PKG = 'dsh' + '-tac';
 const problems = [];
 const notes = [];
 
+const WIN = process.platform === 'win32';
+/* npm/pnpm are .cmd shims on Windows; Node 26 refuses to spawn a batch file directly (EINVAL).
+   Route only those names through cmd.exe, which keeps the argument list out of a shell string. */
+const SHELL_SHIM = new Set(['npm', 'pnpm', 'npx']);
+const exec = (command, args, options) =>
+  WIN && SHELL_SHIM.has(command)
+    ? execFileSync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', command, ...args], options)
+    : execFileSync(command, args, options);
 const run = (command, args = [], options = {}) =>
-  execFileSync(command, args, { cwd: root, stdio: options.inherit ? 'inherit' : ['ignore', 'pipe', 'pipe'], shell: process.platform === 'win32', encoding: 'utf8' });
+  exec(command, args, { cwd: root, stdio: options.inherit ? 'inherit' : ['ignore', 'pipe', 'pipe'], encoding: 'utf8' });
 
 const capture = (command, args = []) => {
   try {

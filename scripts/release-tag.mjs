@@ -26,9 +26,17 @@ const version = String(pkg.version);
 const tag = 'v' + version;
 const PKG = 'dsh' + '-tac';
 
+const WIN = process.platform === 'win32';
+/* npm/pnpm are .cmd shims on Windows; Node 26 refuses to spawn a batch file directly (EINVAL).
+   Route only those names through cmd.exe, which keeps the argument list out of a shell string. */
+const SHELL_SHIM = new Set(['npm', 'pnpm', 'npx']);
+const exec = (command, args, options) =>
+  WIN && SHELL_SHIM.has(command)
+    ? execFileSync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', command, ...args], options)
+    : execFileSync(command, args, options);
 const run = (command, args, options = {}) => {
   process.stdout.write('\n$ ' + [command, ...args].join(' ') + '\n');
-  return execFileSync(command, args, { cwd: root, stdio: options.inherit === false ? ['ignore', 'pipe', 'pipe'] : 'inherit', shell: process.platform === 'win32', encoding: 'utf8' });
+  return exec(command, args, { cwd: root, stdio: options.inherit === false ? ['ignore', 'pipe', 'pipe'] : 'inherit', encoding: 'utf8' });
 };
 
 const capture = (command, args) => {
@@ -129,6 +137,6 @@ if (install) {
   const home = process.env.USERPROFILE || process.env.HOME || '';
   const profile = join(home, '.dsh', 'profiles', 'desktop');
   process.stdout.write('\n$ pnpm add ' + PKG + '@' + version + '  (in ' + profile + ')\n');
-  execFileSync('pnpm', ['add', PKG + '@' + version], { cwd: profile, stdio: 'inherit', shell: process.platform === 'win32' });
+  execFileSync('pnpm', ['add', PKG + '@' + version], { cwd: profile, stdio: 'inherit', shell: false });
 }
 console.log('\nNext: npm run version:report -- --gui=http://127.0.0.1:<port>');
