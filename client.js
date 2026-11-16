@@ -1,4 +1,4 @@
-/*! dsh-tac 0.6.3 — generated from src/ by scripts/build.mjs; do not edit */
+/*! dsh-tac 0.6.4 — generated from src/ by scripts/build.mjs; do not edit */
 "use strict";
 (() => {
   // src/constants.ts
@@ -540,6 +540,52 @@
       return panel ? panel.getBoundingClientRect().width : 0;
     } catch (error) {
       return 0;
+    }
+  }
+  function boardPanePainted() {
+    try {
+      const column = document.querySelector("[data-rightbar-col]") || document.querySelector('[class*="_rightbarCol"]');
+      if (!column) {
+        const panel = rightPanelElement();
+        return panel ? panel.getBoundingClientRect().width >= 40 : false;
+      }
+      const columnRect = column.getBoundingClientRect();
+      if (columnRect.width < 40) return false;
+      const bodies = column.querySelectorAll(".pbx-responsive, .pbx-root, .pbx-boardBody");
+      if (bodies.length === 0) return false;
+      for (const body of bodies) {
+        const rect = body.getBoundingClientRect();
+        if (rect.width < 40 || rect.height < 40) continue;
+        const insideLeft = rect.left >= columnRect.left - 2;
+        const insideRight = rect.right <= columnRect.right + 2;
+        if (insideLeft && insideRight) return true;
+      }
+      return false;
+    } catch (error) {
+      return false;
+    }
+  }
+  function strayBoardBody() {
+    try {
+      const bodies = Array.from(document.querySelectorAll(".pbx-responsive, .pbx-root, .pbx-boardBody"));
+      let widest = null;
+      let widestWidth = 0;
+      for (const body of bodies) {
+        const rect = body.getBoundingClientRect();
+        if (rect.width < 40 || rect.height < 40) continue;
+        const host = body.closest("[data-rightbar-col]");
+        if (host) {
+          const hostRect = host.getBoundingClientRect();
+          if (hostRect.width >= 40 && rect.left >= hostRect.left - 2 && rect.right <= hostRect.right + 2) continue;
+        }
+        if (rect.width > widestWidth) {
+          widest = body;
+          widestWidth = rect.width;
+        }
+      }
+      return widest;
+    } catch (error) {
+      return null;
     }
   }
   function isRightbarFullscreen() {
@@ -7607,8 +7653,18 @@
       }
     };
     const rightbarWidthNow = () => hostRightbarWidth();
-    const BOARD_VISIBLE_MIN_WIDTH = 40;
-    const boardPaneShown = () => rightbarWidthNow() >= BOARD_VISIBLE_MIN_WIDTH;
+    const boardPaneShown = () => boardPanePainted();
+    const clearConcealed = () => {
+      try {
+        document.querySelectorAll('[data-pbx-concealed="1"]').forEach((node) => {
+          const element = node;
+          element.style.visibility = "";
+          element.style.pointerEvents = "";
+          delete element.dataset.pbxConcealed;
+        });
+      } catch (error) {
+      }
+    };
     const verifyBoardClosed = () => {
       later(() => {
         if (!boardPaneShown()) return;
@@ -7644,6 +7700,13 @@
     const openDockBoard = () => {
       const sidebarRight = ctx.sidebarRight;
       if (!sidebarRight) return;
+      clearConcealed();
+      if (strayBoardBody()) {
+        try {
+          if (typeof sidebarRight.closeTab === "function") sidebarRight.closeTab();
+        } catch (error) {
+        }
+      }
       try {
         sidebarRight.openTab(BOARD_KIND);
       } catch (error) {
@@ -7661,7 +7724,7 @@
     const verifyBoardOpened = () => {
       later(() => {
         try {
-          if (!boardPaneShown()) return;
+          if (!boardPaneShown() && !strayBoardBody()) return;
           const column = rightbarColumnElement();
           const body = column ? column.querySelector(".pbx-responsive, .pbx-root") : null;
           const text = body ? (body.textContent || "").trim() : "";
@@ -7677,23 +7740,49 @@
       }, 400);
     };
     const closeDockBoard = () => {
-      if (!boardPaneShown()) return;
+      const strayAtEntry = Boolean(strayBoardBody());
+      logEvent("info", "board", "close-attempt", { shown: boardPaneShown(), stray: strayAtEntry, width: Math.round(rightbarWidthNow()) });
+      if (!boardPaneShown() && !strayAtEntry) return;
       const collapseDock = () => {
         try {
           if (ctx.sidebarRight && typeof ctx.sidebarRight.toggleExpanded === "function") ctx.sidebarRight.toggleExpanded();
         } catch (error) {
         }
       };
+      const concealStray = () => {
+        const stray = strayBoardBody();
+        if (!stray) return false;
+        const node = stray;
+        try {
+          if (node.dataset.pbxConcealed === "1") return true;
+          node.dataset.pbxConcealed = "1";
+          const width = Math.round(node.getBoundingClientRect().width);
+          node.style.visibility = "hidden";
+          node.style.pointerEvents = "none";
+          logEvent("warn", "board", "close-concealed", { width });
+          return true;
+        } catch (error) {
+          return false;
+        }
+      };
       if (!hideRightPane()) {
         collapseDock();
-        verifyBoardClosed();
-        return;
       }
       later(() => {
-        if (!boardPaneShown()) return;
+        if (!boardPaneShown() && !strayBoardBody()) {
+          clearConcealed();
+          return;
+        }
         collapseDock();
-        verifyBoardClosed();
-      }, 200);
+        later(() => {
+          if (!boardPaneShown() && !strayBoardBody()) {
+            clearConcealed();
+            return;
+          }
+          concealStray();
+          verifyBoardClosed();
+        }, 200);
+      }, 150);
     };
     const BOARD_NARROW_WIDTH = 380;
     const BOARD_NARROW_MAX = 460;

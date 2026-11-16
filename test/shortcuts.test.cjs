@@ -1993,17 +1993,41 @@ function connectBoardPane(harness, options) {
      `data-sidebar-right-open="true"` after `closeRightbar` — that stale flag is what made an
      attribute-based close look successful while the board was still on screen, so the harness
      reproduces it. */
-  const state = { kind: null, expanded: false, fullscreen: false, width: 0, preferred: 380, bodyMounted: false };
+  const state = { kind: null, expanded: false, fullscreen: false, width: 0, preferred: 380, bodyMounted: true };
   const panel = new VirtualNode('div', { class: '_panel' }, [], harness.doc);
-  const column = new VirtualNode('div', { 'data-rightbar-col': '' }, [], harness.doc);
+  const column = new VirtualNode('div', { 'data-rightbar-col': '', className: '_rightbarCol' }, [], harness.doc);
   const fullscreenNode = new VirtualNode('div', { 'data-rightbar-fullscreen': 'true' }, [], harness.doc);
   column.getBoundingClientRect = () => ({ width: state.width, height: 400, top: 0, left: 800, right: 800 + state.width, bottom: 400 });
+  harness.doc.__addRoot(column);
+  /* Mirror the host's absolutely positioned tab body: it lives INSIDE the column element, and
+     clamping the column to width 0 does not move it, so it stays painted outside the visible area.
+     A body is only really gone when the host unmounts it. */
+  /* The harness tree is parent-before-child, so the column must be connected the way a real DOM
+     is: a mountable (body-less) column first, then the body as its child. */
+  const body = new VirtualNode('div', { className: 'pbx-boardBody' }, [], harness.doc);
+  body.mountColumn = column;
+  void body.mountColumn;
+  body.textContent = 'board';
+  const insideColumn = () => {
+    const left = Math.max(800, 800 + state.width - 379);
+    return { width: 379, height: 400, top: 0, left, right: left + 379, bottom: 400 };
+  };
+  body.getBoundingClientRect = insideColumn;
   harness.doc.__addRoot(column);
 
   function sync() {
     state.width = state.expanded ? state.preferred : 0;
     const dockExpanded = Boolean(state.kind && state.expanded);
     const mounted = dockExpanded || (frame && Boolean(state.kind));
+    /* The body lives inside the column element, so it is queried from there, not from a root.
+       A frame host keeps it mounted (painted outside the clamped column) until the tab is
+       re-placed; a dock-only host unmounts it with the dock. */
+    const bodyMounted = frame ? state.bodyMounted : Boolean(state.kind && state.expanded && state.bodyMounted);
+    if (bodyMounted) {
+      if (body.parentNode !== column) column.appendChild(body);
+    } else if (body.parentNode === column) {
+      column.removeChild(body);
+    }
     if (mounted) panel.setAttribute('data-sidebar-right-open', '');
     else panel.removeAttribute('data-sidebar-right-open');
     if (mounted) harness.doc.__addRoot(panel);
@@ -2014,9 +2038,17 @@ function connectBoardPane(harness, options) {
 
   harness.services.sidebarRight.active = () => (state.kind ? { kind: state.kind } : undefined);
   harness.services.sidebarRight.isExpanded = () => state.expanded;
+  harness.services.sidebarRight.closeTab = () => {
+    /* Re-placing the tab replaces the previous body, which for a frame host is the only way to get
+       rid of a body painted outside the clamped column. */
+    state.bodyMounted = false;
+    sync();
+  };
   harness.services.sidebarRight.openTab = (kind) => {
     state.kind = kind;
-    state.bodyMounted = true;
+    /* The real host only mounts a body while the pane is expanded; placing a tab into a collapsed
+       pane keeps it body-less (which is why the frame path must open the column as well). */
+    state.bodyMounted = state.expanded;
     harness.services.calls.sidebarOpenTab.push(kind);
     sync();
   };
@@ -2044,6 +2076,8 @@ function connectBoardPane(harness, options) {
     harness.services.layout.openRightbar = (track, fullscreen) => {
       harness.services.calls.openRightbar.push([track, fullscreen]);
       state.expanded = true;
+      /* Expanding the column shows whatever tab is placed, so the body mounts with it. */
+      state.bodyMounted = Boolean(state.kind);
       sync();
     };
     harness.services.layout.closeRightbar = () => {
@@ -4877,6 +4911,31 @@ test('Alt+N toggles against the rendered column, not the stale dock flag', () =>
   harness.pressCombo('alt+KeyN');
   assert.equal(state.width, 380, 'a closed board can be reopened');
   assert.equal(harness.services.calls.openRightbar.length, 2, 'the frame API is used again on reopen');
+});
+test('a body left painted after the column clamps still closes the board', () => {
+  const harness = createHarness();
+  const state = connectBoardPane(harness, { frame: true });
+  harness.resetState();
+  harness.clearSpies();
+
+  harness.pressCombo('alt+KeyN');
+  assert.equal(state.width, 380, 'the pane opens');
+  assert.equal(harness.doc.querySelectorAll('.pbx-boardBody').length, 1, 'the board body is mounted');
+
+  /* Reproduce the reported state: the host clamps the column to 0 but leaves the tab body
+     mounted and painted at full width. Earlier versions read the column, said "closed", and
+     skipped the close entirely — so the board stayed on screen. */
+  state.expanded = false;
+  state.width = 0;
+  const columnNode = harness.doc.querySelector('[data-rightbar-col]');
+  const bodyNode = harness.doc.querySelector('.pbx-boardBody');
+  if (bodyNode && bodyNode.parentNode !== columnNode) columnNode.appendChild(bodyNode);
+  assert.equal(harness.doc.querySelectorAll('.pbx-boardBody').length, 1, 'the body is still painted');
+
+  const before = harness.services.calls.closeRightbar.length + harness.services.calls.sidebarToggleExpanded.length + harness.services.calls.openRightbar.length;
+  harness.pressCombo('alt+KeyN');
+  const after = harness.services.calls.closeRightbar.length + harness.services.calls.sidebarToggleExpanded.length + harness.services.calls.openRightbar.length;
+  assert.ok(after > before, 'a close is attempted even though the column measures 0');
 });
 test('reopening the pane re-places the tab, so the board body is not blank', () => {
   const harness = createHarness();

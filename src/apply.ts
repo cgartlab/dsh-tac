@@ -14,7 +14,7 @@ import type { UiStore } from './types';
 import { PLUGIN_SECTION_ID, openSettingsTarget, pluginSettingEntries, readHostSections } from './core/settings-catalog';
 import type { SettingEntry, SettingsCatalogSnapshot } from './core/settings-catalog';
 import { bindingsOverlap, comboBindingOf, comboDisplay, IS_MAC } from './core/combos';
-import { hostCentreColumnWidth, hostRightbarWidth, isRightPanelExpanded, isRightbarFullscreen, rightbarColumnElement, sidebarSignature } from './core/dom';
+import { boardPanePainted, hostCentreColumnWidth, hostRightbarWidth, isRightPanelExpanded, isRightbarFullscreen, rightbarColumnElement, sidebarSignature, strayBoardBody } from './core/dom';
 import { moveCaretToEnd } from './features/interject';
 import { installChatScrollListeners } from './features/chat-scroll';
 import { installChatHistoryAutoLoad } from './features/chat-history';
@@ -344,15 +344,28 @@ export function apply(ctx: HostContext): void {
      in one place; these aliases keep the call sites reading naturally. */
   const rightbarWidthNow = (): number => hostRightbarWidth();
   /**
-   * Whether the right pane is actually rendered — the only signal that matches what the user sees.
+   * Whether the board is on screen — the only signal that matches what the user sees.
    *
-   * The dock's own `data-sidebar-right-open` flag never comes back down when the frame hides the
-   * column: the panel stays mounted with the attribute still "true". Reading that flag therefore
-   * called a closed board "open", and the next Alt+N took the close branch again instead of
-   * reopening. Width is what the layout really renders, so measure the column instead.
+   * Two host facts fooled earlier versions: the dock keeps `data-sidebar-right-open="true"` on a
+   * hidden pane, and the tab body is absolutely positioned, so clamping the column to width 0
+   * leaves the body measured at full width and painted outside the (overflow-hidden) column.
+   * Measuring the column said "closed" while the board was still visible. Only a board painted
+   * *inside* a non-zero column counts as open.
    */
-  const BOARD_VISIBLE_MIN_WIDTH = 40;
-  const boardPaneShown = (): boolean => rightbarWidthNow() >= BOARD_VISIBLE_MIN_WIDTH;
+  const boardPaneShown = (): boolean => boardPanePainted();
+  /** Restore anything a fallback hid, so a later open is not fighting our own style. */
+  const clearConcealed = (): void => {
+    try {
+      document.querySelectorAll('[data-pbx-concealed="1"]').forEach((node) => {
+        const element = node as HTMLElement;
+        element.style.visibility = '';
+        element.style.pointerEvents = '';
+        delete element.dataset.pbxConcealed;
+      });
+    } catch (error) {
+      /* ignore */
+    }
+  };
   /** A close the host ignores would look like a dead key; leave a breadcrumb with the state. */
   const verifyBoardClosed = (): void => {
     later(() => {
@@ -408,6 +421,16 @@ export function apply(ctx: HostContext): void {
   const openDockBoard = (): void => {
     const sidebarRight = ctx.sidebarRight;
     if (!sidebarRight) return;
+    clearConcealed();
+    /* A clamped body stays painted where the host left it and cannot be reused, so replace it by
+       re-placing the tab; that is also what mounts the body after the host unmounted it. */
+    if (strayBoardBody()) {
+      try {
+        if (typeof sidebarRight.closeTab === 'function') sidebarRight.closeTab();
+      } catch (error) {
+        /* ignore */
+      }
+    }
     try {
       sidebarRight.openTab(BOARD_KIND);
     } catch (error) {
@@ -428,7 +451,7 @@ export function apply(ctx: HostContext): void {
   const verifyBoardOpened = (): void => {
     later(() => {
       try {
-        if (!boardPaneShown()) return;
+        if (!boardPaneShown() && !strayBoardBody()) return;
         const column = rightbarColumnElement();
         const body = column ? column.querySelector('.pbx-responsive, .pbx-root') : null;
         const text = body ? (body.textContent || '').trim() : '';
@@ -453,7 +476,11 @@ export function apply(ctx: HostContext): void {
    * attribute probe reads it as open. Collapse whichever is still set, then verify.
    */
   const closeDockBoard = (): void => {
-    if (!boardPaneShown()) return;
+    const strayAtEntry = Boolean(strayBoardBody());
+    logEvent('info', 'board', 'close-attempt', { shown: boardPaneShown(), stray: strayAtEntry, width: Math.round(rightbarWidthNow()) });
+    /* Close whenever anything is painted: a clamped column leaves a stray body on screen, and
+       checking only `boardPaneShown()` skipped exactly that case. */
+    if (!boardPaneShown() && !strayAtEntry) return;
     const collapseDock = (): void => {
       try {
         if (ctx.sidebarRight && typeof ctx.sidebarRight.toggleExpanded === 'function') ctx.sidebarRight.toggleExpanded();
@@ -461,19 +488,46 @@ export function apply(ctx: HostContext): void {
         /* ignore */
       }
     };
+    /** Last resort: the host left a board body painted where nothing can hide it. */
+    const concealStray = (): boolean => {
+      const stray = strayBoardBody();
+      if (!stray) return false;
+      const node = stray as HTMLElement;
+      try {
+        if (node.dataset.pbxConcealed === '1') return true;
+        node.dataset.pbxConcealed = '1';
+        const width = Math.round(node.getBoundingClientRect().width);
+        /* visibility:hidden keeps the layer's layout measurable (so a later open still finds it
+           and can restore it) while removing it from the screen; display:none collapsed the
+           column geometry and confused the next open. */
+        node.style.visibility = 'hidden';
+        node.style.pointerEvents = 'none';
+        logEvent('warn', 'board', 'close-concealed', { width });
+        return true;
+      } catch (error) {
+        return false;
+      }
+    };
     if (!hideRightPane()) {
       collapseDock();
-      verifyBoardClosed();
-      return;
     }
-    /* The frame API wins when it works. Only if the column is still painted a moment later does
-       the dock's own flag need a second nudge — that is the case where an attribute-based close
-       looked successful while the panel stayed on screen. */
+    /* Whatever was painted before must be gone afterwards. A clamped column leaves the absolutely
+       positioned tab body painted outside it, so check for a visible body, not for a width. */
     later(() => {
-      if (!boardPaneShown()) return;
+      if (!boardPaneShown() && !strayBoardBody()) {
+        clearConcealed();
+        return;
+      }
       collapseDock();
-      verifyBoardClosed();
-    }, 200);
+      later(() => {
+        if (!boardPaneShown() && !strayBoardBody()) {
+          clearConcealed();
+          return;
+        }
+        concealStray();
+        verifyBoardClosed();
+      }, 200);
+    }, 150);
   };
   /* Alt+N asks for "the narrow board", so narrow is a FIXED width, not the width the user
      last dragged. `boardStateNow()` classifies a pane by measured width (below `BOARD_NARROW_MAX`

@@ -59,6 +59,69 @@ export function hostRightbarWidth(): number {
   }
 }
 
+/**
+ * Whether the board is painted somewhere the user can see it.
+ *
+ * The dock's tab body is absolutely positioned by the host: hiding the column clamps the column to
+ * width 0 but leaves the body measured at its full width, painted *outside* the (overflow-hidden)
+ * column area. Measuring the column therefore reported "closed" while the board was still on
+ * screen — the canvas widened and the board stayed. Only "painted inside a non-zero column" counts.
+ */
+export function boardPanePainted(): boolean {
+  try {
+    const column = document.querySelector('[data-rightbar-col]') || document.querySelector('[class*="_rightbarCol"]');
+    if (!column) {
+      const panel = rightPanelElement();
+      return panel ? panel.getBoundingClientRect().width >= 40 : false;
+    }
+    const columnRect = column.getBoundingClientRect();
+    if (columnRect.width < 40) return false;
+    const bodies = column.querySelectorAll('.pbx-responsive, .pbx-root, .pbx-boardBody');
+    if (bodies.length === 0) return false;
+    for (const body of bodies) {
+      const rect = body.getBoundingClientRect();
+      if (rect.width < 40 || rect.height < 40) continue;
+      /* An absolutely positioned body can outlive the clamp; require it to sit inside the column. */
+      const insideLeft = rect.left >= columnRect.left - 2;
+      const insideRight = rect.right <= columnRect.right + 2;
+      if (insideLeft && insideRight) return true;
+    }
+    return false;
+  } catch (error) {
+    return false;
+  }
+}
+
+/**
+ * Find a board body painted outside any column — a leftover after the host clamped the pane.
+ *
+ * Returns the widest such copy, or null. Used to verify a close and to decide whether a fresh
+ * `openTab` is needed on the next open (a clamped body is not reusable: it stays where it is).
+ */
+export function strayBoardBody(): Element | null {
+  try {
+    const bodies = Array.from(document.querySelectorAll('.pbx-responsive, .pbx-root, .pbx-boardBody'));
+    let widest: Element | null = null;
+    let widestWidth = 0;
+    for (const body of bodies) {
+      const rect = body.getBoundingClientRect();
+      if (rect.width < 40 || rect.height < 40) continue;
+      const host = body.closest('[data-rightbar-col]');
+      if (host) {
+        const hostRect = host.getBoundingClientRect();
+        if (hostRect.width >= 40 && rect.left >= hostRect.left - 2 && rect.right <= hostRect.right + 2) continue;
+      }
+      if (rect.width > widestWidth) {
+        widest = body;
+        widestWidth = rect.width;
+      }
+    }
+    return widest;
+  } catch (error) {
+    return null;
+  }
+}
+
 /** Whether the right pane is currently showing fullscreen. */
 export function isRightbarFullscreen(): boolean {
   try {
