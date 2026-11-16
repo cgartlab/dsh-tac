@@ -1987,7 +1987,13 @@ test('auto-repeat and IME composition never trigger a shortcut', () => {
  * The plugin reads that same markup, so the three-state board logic can be exercised end to end.
  */
 function connectBoardPane(harness, options) {
-  const state = { kind: null, expanded: false, fullscreen: false, width: 0 };
+  const frame = Boolean(options && options.frame);
+  /* `width` is what the column actually renders (0 while closed); `preferred` is the width the
+     host remembers for the next open. A frame host keeps the panel mounted with
+     `data-sidebar-right-open="true"` after `closeRightbar` — that stale flag is what made an
+     attribute-based close look successful while the board was still on screen, so the harness
+     reproduces it. */
+  const state = { kind: null, expanded: false, fullscreen: false, width: 0, preferred: 380 };
   const panel = new VirtualNode('div', { class: '_panel' }, [], harness.doc);
   const column = new VirtualNode('div', { 'data-rightbar-col': '' }, [], harness.doc);
   const fullscreenNode = new VirtualNode('div', { 'data-rightbar-fullscreen': 'true' }, [], harness.doc);
@@ -1995,10 +2001,12 @@ function connectBoardPane(harness, options) {
   harness.doc.__addRoot(column);
 
   function sync() {
-    const open = Boolean(state.kind && state.expanded);
-    if (open) panel.setAttribute('data-sidebar-right-open', '');
+    state.width = state.expanded ? state.preferred : 0;
+    const dockExpanded = Boolean(state.kind && state.expanded);
+    const mounted = dockExpanded || (frame && Boolean(state.kind));
+    if (mounted) panel.setAttribute('data-sidebar-right-open', '');
     else panel.removeAttribute('data-sidebar-right-open');
-    if (open) harness.doc.__addRoot(panel);
+    if (mounted) harness.doc.__addRoot(panel);
     else harness.doc.__removeRoot(panel);
     if (state.fullscreen) harness.doc.__addRoot(fullscreenNode);
     else harness.doc.__removeRoot(fullscreenNode);
@@ -2013,7 +2021,6 @@ function connectBoardPane(harness, options) {
   };
   harness.services.sidebarRight.toggleExpanded = () => {
     state.expanded = !state.expanded;
-    if (state.expanded && !state.width) state.width = 380;
     harness.services.calls.sidebarToggleExpanded.push(state.expanded);
     sync();
   };
@@ -2023,18 +2030,18 @@ function connectBoardPane(harness, options) {
     sync();
   };
   harness.services.layout.panels.setRightbar = (px) => {
-    state.width = px;
+    state.preferred = px;
     harness.services.calls.setRightbar.push(px);
+    sync();
   };
   /* DSH 0.2.2-rc.3 moved the right sidebar onto the frame: the column is shown/hidden by
-     `openRightbar(track, fullscreen)` / `closeRightbar()`, and the dock flag alone leaves it
-     at width 0. A `frame` harness mirrors that host; a plain harness keeps the older
-     dock-only shape so both builds stay covered. */
-  if (options && options.frame) {
+     `openRightbar(track, fullscreen)` / `closeRightbar()`, and the dock flag alone leaves it at
+     width 0. A `frame` harness mirrors that host; a plain harness keeps the older dock-only
+     shape so both builds stay covered. */
+  if (frame) {
     harness.services.layout.openRightbar = (track, fullscreen) => {
       harness.services.calls.openRightbar.push([track, fullscreen]);
       state.expanded = true;
-      if (!state.width) state.width = 380;
       sync();
     };
     harness.services.layout.closeRightbar = () => {
@@ -2045,7 +2052,6 @@ function connectBoardPane(harness, options) {
   }
   return state;
 }
-
 test('Alt+N opens the narrow board and the next press closes it', () => {
   const harness = createHarness();
   const state = connectBoardPane(harness);
@@ -4845,6 +4851,28 @@ test('a frame-mode host opens and closes the board through openRightbar/closeRig
   assert.equal(harness.services.calls.sidebarToggleExpanded.length, 0, 'the dock toggle is not needed on a frame host');
 });
 
+test('Alt+N toggles against the rendered column, not the stale dock flag', () => {
+  const harness = createHarness();
+  const state = connectBoardPane(harness, { frame: true });
+  harness.resetState();
+  harness.clearSpies();
+
+  harness.pressCombo('alt+KeyN');
+  assert.equal(state.width, 380, 'the first press opens the narrow board');
+  assert.equal(harness.services.calls.openRightbar.length, 1, 'the frame column is opened');
+
+  harness.pressCombo('alt+KeyN');
+  assert.equal(state.width, 0, 'the second press closes it');
+  assert.equal(harness.services.calls.closeRightbar.length, 1, 'the frame column is closed');
+  assert.ok(
+    harness.doc.querySelectorAll('[class*="_panel"][data-sidebar-right-open]').length >= 1,
+    'the host keeps its stale open flag, which the toggle must ignore'
+  );
+
+  harness.pressCombo('alt+KeyN');
+  assert.equal(state.width, 380, 'a closed board can be reopened');
+  assert.equal(harness.services.calls.openRightbar.length, 2, 'the frame API is used again on reopen');
+});
 test('a dock-only host still opens the board through sidebarRight.toggleExpanded', () => {
   const harness = createHarness();
   const state = connectBoardPane(harness);

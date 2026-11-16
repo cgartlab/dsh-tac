@@ -47,8 +47,11 @@ export function isRightPanelExpanded(): boolean {
 export function hostRightbarWidth(): number {
   try {
     const column = document.querySelector('[data-rightbar-col]') || document.querySelector('[class*="_rightbarCol"]');
-    const own = column ? column.getBoundingClientRect().width : 0;
-    if (own > 0) return own;
+    /* The column is authoritative whenever it exists. Falling back to the panel's own width when
+       the column measured 0 was wrong: on DSH 0.2.2-rc.3 the panel stays mounted at its full width
+       after `closeRightbar()` hides the column, so the fallback reported a closed pane as open and
+       the Alt+N toggle never reopened. Only a host with no column element needs the fallback. */
+    if (column) return column.getBoundingClientRect().width;
     const panel = rightPanelElement();
     return panel ? panel.getBoundingClientRect().width : 0;
   } catch (error) {

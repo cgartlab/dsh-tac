@@ -9,6 +9,9 @@
 ## [未发布]
 
 - **README 三张截图更新为 0.6.0 实拍。** 看板（项目视图 7 列全宽）、悬浮会话列表、命令面板（项目 chip 行里能看到「只看已归档」）都是在运行 0.6.0 的应用里即时截的，`screenshots.meta.json` 的 `showsVersion` / `verifiedThrough` 同步到 0.6.0 与当前提交，之前的欠账与源码漂移提醒均已清除。
+## [0.6.2] - 2026-11-16
+
+- **修复 Alt+N 只能打开、不能再次收起的死锁。** DSH 0.2.2-rc.3 在 `closeRightbar()` 之后仍把右侧面板挂在 DOM 里，`data-sidebar-right-open` 保持 `true`；插件又用两层推断判断"是否已打开"（面板属性 + 列宽回退到面板自身宽度），于是关闭后仍被认为处于打开状态，下一次 Alt+N 继续走关闭分支，表现为"怎么按都收不起来"。现在只看 frame 列的真实渲染宽度（列宽 0 即关闭），打开与关闭共用同一判据；列宽没归零时会再收缩一次 dock 并记一条 `board:close-ineffective` 警告，`board:toggle` 日志同时记录 `shown` / `active` / `width`，下次有问题一眼能定位。
 ## [0.6.1] - 2026-11-15
 
 - **适配 DSH 0.2.2-rc.3 的右侧栏与自动化接口。** 新版把"右侧栏是否出现"从面板挪到了 frame 层（`layout.openRightbar(track, fullscreen)` / `layout.closeRightbar()`），旧写法在 rc.3 上只会切换标签、栏宽永远是 0。打开/关闭看板现在优先走 frame 接口，老宿主仍回落到 `sidebarRight.toggleExpanded()`，两代宿主都能用。

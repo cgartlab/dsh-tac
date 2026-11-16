@@ -335,15 +335,35 @@ export function apply(ctx: HostContext): void {
       if (!sidebarRight) return;
       /* LESSONS: isExpanded() is unreliable (a build could leave Alt+N/B/V open-only).
          Decide visibility from the DOM panel marker + the active panel kind instead. */
-      if (boardPanelVisible() && rightBoardActive()) closeDockBoard();
+      if (rightBoardActive() && boardPaneShown()) closeDockBoard();
     } catch (error) {
       /* ignore */
     }
   };
   /* Host-structure probes live in core/dom.ts so every selector the plugin depends on sits
      in one place; these aliases keep the call sites reading naturally. */
-  const boardPanelVisible = (): boolean => isRightPanelExpanded();
   const rightbarWidthNow = (): number => hostRightbarWidth();
+  /**
+   * Whether the right pane is actually rendered — the only signal that matches what the user sees.
+   *
+   * The dock's own `data-sidebar-right-open` flag never comes back down when the frame hides the
+   * column: the panel stays mounted with the attribute still "true". Reading that flag therefore
+   * called a closed board "open", and the next Alt+N took the close branch again instead of
+   * reopening. Width is what the layout really renders, so measure the column instead.
+   */
+  const BOARD_VISIBLE_MIN_WIDTH = 40;
+  const boardPaneShown = (): boolean => rightbarWidthNow() >= BOARD_VISIBLE_MIN_WIDTH;
+  /** A close the host ignores would look like a dead key; leave a breadcrumb with the state. */
+  const verifyBoardClosed = (): void => {
+    later(() => {
+      if (!boardPaneShown()) return;
+      logEvent('warn', 'board', 'close-ineffective', {
+        width: Math.round(rightbarWidthNow()),
+        panelFlag: Boolean(isRightPanelExpanded()),
+        frameApi: Boolean(ctx.layout && typeof ctx.layout.closeRightbar === 'function')
+      });
+    }, 400);
+  };
   /**
    * Show/hide the frame's right sidebar.
    *
@@ -377,21 +397,45 @@ export function apply(ctx: HostContext): void {
     }
     return false;
   };
-  /** Open the docked board: place/activate its tab, then make the frame column appear. */
+  /** Open the docked board: activate its tab, then make the frame column appear. */
   const openDockBoard = (): void => {
     const sidebarRight = ctx.sidebarRight;
     if (!sidebarRight) return;
     if (!rightBoardActive()) sidebarRight.openTab(BOARD_KIND);
-    if (boardPanelVisible()) return;
-    if (!showRightPane() && typeof sidebarRight.toggleExpanded === 'function') sidebarRight.toggleExpanded();
+    if (boardPaneShown()) return;
+    if (showRightPane()) return;
+    if (typeof sidebarRight.toggleExpanded === 'function') sidebarRight.toggleExpanded();
   };
-  /** Hide the docked board, preferring the frame API so the column itself collapses. */
+  /**
+   * Hide the docked board.
+   *
+   * Two independent flags have to agree for the pane to stay closed: the frame's column
+   * (`closeRightbar`) and the dock's own expanded flag. Closing only the frame leaves the dock
+   * expanded — the panel is still mounted (and can still paint over the chat), and every
+   * attribute probe reads it as open. Collapse whichever is still set, then verify.
+   */
   const closeDockBoard = (): void => {
-    if (!boardPanelVisible()) return;
+    if (!boardPaneShown()) return;
+    const collapseDock = (): void => {
+      try {
+        if (ctx.sidebarRight && typeof ctx.sidebarRight.toggleExpanded === 'function') ctx.sidebarRight.toggleExpanded();
+      } catch (error) {
+        /* ignore */
+      }
+    };
     if (!hideRightPane()) {
-      const sidebarRight = ctx.sidebarRight;
-      if (sidebarRight && typeof sidebarRight.toggleExpanded === 'function') sidebarRight.toggleExpanded();
+      collapseDock();
+      verifyBoardClosed();
+      return;
     }
+    /* The frame API wins when it works. Only if the column is still painted a moment later does
+       the dock's own flag need a second nudge — that is the case where an attribute-based close
+       looked successful while the panel stayed on screen. */
+    later(() => {
+      if (!boardPaneShown()) return;
+      collapseDock();
+      verifyBoardClosed();
+    }, 200);
   };
   /* Alt+N asks for "the narrow board", so narrow is a FIXED width, not the width the user
      last dragged. `boardStateNow()` classifies a pane by measured width (below `BOARD_NARROW_MAX`
@@ -473,7 +517,7 @@ export function apply(ctx: HostContext): void {
   const boardOpenNow = (): boolean => {
     try {
       if (!ctx.sidebarRight) return false;
-      return Boolean(boardPanelVisible() && rightBoardActive());
+      return Boolean(boardPaneShown() && rightBoardActive());
     } catch (error) {
       return false;
     }
@@ -655,13 +699,13 @@ export function apply(ctx: HostContext): void {
     return false;
   };
   const toggleNativeBoard = (mode: string): void => {
-    logEvent('info', 'board', 'toggle', { mode: mode });
+    logEvent('info', 'board', 'toggle', { mode: mode, shown: boardPaneShown(), active: rightBoardActive(), width: Math.round(rightbarWidthNow()) });
     lastBoardIntentAt = Date.now();
     try {
       const sidebarRight = ctx.sidebarRight;
       if (!sidebarRight) return;
       const visible = rightBoardActive();
-      const expanded = boardPanelVisible();
+      const expanded = boardPaneShown();
       /* Each size key is its own toggle. While the board is showing in ANY size, pressing any
          size key closes it — "press again to close" then holds whatever size you are looking
          at, instead of turning Alt+B into a resize when the pane happens to be narrow. Opening
@@ -691,7 +735,7 @@ export function apply(ctx: HostContext): void {
         logEvent('info', 'board', 'open-disabled', {});
         return;
       }
-      const wasVisible = boardPanelVisible();
+      const wasVisible = boardPaneShown();
       openDockBoard();
       if (!wasVisible) {
         const width = boardWidthDefault();

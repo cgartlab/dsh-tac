@@ -1,4 +1,4 @@
-/*! dsh-tac 0.6.1 — generated from src/ by scripts/build.mjs; do not edit */
+/*! dsh-tac 0.6.2 — generated from src/ by scripts/build.mjs; do not edit */
 "use strict";
 (() => {
   // src/constants.ts
@@ -535,8 +535,7 @@
   function hostRightbarWidth() {
     try {
       const column = document.querySelector("[data-rightbar-col]") || document.querySelector('[class*="_rightbarCol"]');
-      const own = column ? column.getBoundingClientRect().width : 0;
-      if (own > 0) return own;
+      if (column) return column.getBoundingClientRect().width;
       const panel = rightPanelElement();
       return panel ? panel.getBoundingClientRect().width : 0;
     } catch (error) {
@@ -7603,12 +7602,23 @@
       try {
         const sidebarRight = ctx.sidebarRight;
         if (!sidebarRight) return;
-        if (boardPanelVisible() && rightBoardActive()) closeDockBoard();
+        if (rightBoardActive() && boardPaneShown()) closeDockBoard();
       } catch (error) {
       }
     };
-    const boardPanelVisible = () => isRightPanelExpanded();
     const rightbarWidthNow = () => hostRightbarWidth();
+    const BOARD_VISIBLE_MIN_WIDTH = 40;
+    const boardPaneShown = () => rightbarWidthNow() >= BOARD_VISIBLE_MIN_WIDTH;
+    const verifyBoardClosed = () => {
+      later(() => {
+        if (!boardPaneShown()) return;
+        logEvent("warn", "board", "close-ineffective", {
+          width: Math.round(rightbarWidthNow()),
+          panelFlag: Boolean(isRightPanelExpanded()),
+          frameApi: Boolean(ctx.layout && typeof ctx.layout.closeRightbar === "function")
+        });
+      }, 400);
+    };
     const showRightPane = () => {
       try {
         const layout = ctx.layout;
@@ -7635,15 +7645,28 @@
       const sidebarRight = ctx.sidebarRight;
       if (!sidebarRight) return;
       if (!rightBoardActive()) sidebarRight.openTab(BOARD_KIND);
-      if (boardPanelVisible()) return;
-      if (!showRightPane() && typeof sidebarRight.toggleExpanded === "function") sidebarRight.toggleExpanded();
+      if (boardPaneShown()) return;
+      if (showRightPane()) return;
+      if (typeof sidebarRight.toggleExpanded === "function") sidebarRight.toggleExpanded();
     };
     const closeDockBoard = () => {
-      if (!boardPanelVisible()) return;
+      if (!boardPaneShown()) return;
+      const collapseDock = () => {
+        try {
+          if (ctx.sidebarRight && typeof ctx.sidebarRight.toggleExpanded === "function") ctx.sidebarRight.toggleExpanded();
+        } catch (error) {
+        }
+      };
       if (!hideRightPane()) {
-        const sidebarRight = ctx.sidebarRight;
-        if (sidebarRight && typeof sidebarRight.toggleExpanded === "function") sidebarRight.toggleExpanded();
+        collapseDock();
+        verifyBoardClosed();
+        return;
       }
+      later(() => {
+        if (!boardPaneShown()) return;
+        collapseDock();
+        verifyBoardClosed();
+      }, 200);
     };
     const BOARD_NARROW_WIDTH = 380;
     const BOARD_NARROW_MAX = 460;
@@ -7714,7 +7737,7 @@
     const boardOpenNow = () => {
       try {
         if (!ctx.sidebarRight) return false;
-        return Boolean(boardPanelVisible() && rightBoardActive());
+        return Boolean(boardPaneShown() && rightBoardActive());
       } catch (error) {
         return false;
       }
@@ -7855,13 +7878,13 @@
       return false;
     };
     const toggleNativeBoard = (mode) => {
-      logEvent("info", "board", "toggle", { mode });
+      logEvent("info", "board", "toggle", { mode, shown: boardPaneShown(), active: rightBoardActive(), width: Math.round(rightbarWidthNow()) });
       lastBoardIntentAt = Date.now();
       try {
         const sidebarRight = ctx.sidebarRight;
         if (!sidebarRight) return;
         const visible = rightBoardActive();
-        const expanded = boardPanelVisible();
+        const expanded = boardPaneShown();
         if (visible && expanded) {
           if (rightbarFullscreen()) toggleRightbarFullscreen();
           closeDockBoard();
@@ -7881,7 +7904,7 @@
           logEvent("info", "board", "open-disabled", {});
           return;
         }
-        const wasVisible = boardPanelVisible();
+        const wasVisible = boardPaneShown();
         openDockBoard();
         if (!wasVisible) {
           const width = boardWidthDefault();

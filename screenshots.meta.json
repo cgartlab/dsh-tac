@@ -36,15 +36,15 @@
   ],
   "acknowledgedStale": [
     {
-      "reason": "0.6.1 changes no depicted surface (board toolbar/palette/HUD untouched); images were captured against the 0.6.0 build of the same UI.",
+      "reason": "Images were captured against 0.6.0; 0.6.1 and 0.6.2 change no depicted surface (board toolbar, palette and HUD visuals are unchanged).",
       "path": "docs/screenshots/board.png"
     },
     {
-      "reason": "0.6.1 changes no depicted surface; images were captured against the 0.6.0 build of the same UI.",
+      "reason": "Images were captured against 0.6.0; 0.6.1 and 0.6.2 change no depicted surface (board toolbar, palette and HUD visuals are unchanged).",
       "path": "docs/screenshots/hud.png"
     },
     {
-      "reason": "0.6.1 changes no depicted surface; images were captured against the 0.6.0 build of the same UI.",
+      "reason": "Images were captured against 0.6.0; 0.6.1 and 0.6.2 change no depicted surface (board toolbar, palette and HUD visuals are unchanged).",
       "path": "docs/screenshots/palette.png"
     }
   ]
